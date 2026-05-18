@@ -55,3 +55,39 @@ def test_create_upload_target_infers_source_type_and_storage_path():
     assert repo.created_payload["source_type"] == "pdf"
     assert response.bucket == "raw-documents"
     assert response.path.endswith("/raw/policy.pdf")
+
+
+class _SignedPathStorage:
+    async def create_signed_upload_target(self, *, bucket: str, path: str, upsert: bool = False):
+        return SimpleNamespace(
+            bucket=bucket,
+            path=path,
+            upload_url="https://example.supabase.co/object/upload/sign/raw-documents/path?token=abc",
+        )
+
+
+def test_create_upload_target_normalizes_signed_upload_url():
+    repo = _Repo()
+    settings = Settings(
+        _env_file=None,
+        supabase_raw_bucket="raw-documents",
+        supabase_storage_url="https://example.supabase.co",
+        supabase_storage_service_key="service-role",
+    )
+    service = DocumentService(
+        repository=repo,
+        ingestion_service=SimpleNamespace(),
+        storage=_SignedPathStorage(),
+        settings=settings,
+    )
+    principal = SimpleNamespace(user_id=uuid4())
+
+    response = asyncio.run(
+        service.create_upload_target(
+            uuid4(),
+            principal,
+            CreateUploadUrlRequest(filename="policy.md", content_type="text/markdown"),
+        )
+    )
+
+    assert response.upload_url == "https://example.supabase.co/storage/v1/object/upload/sign/raw-documents/path?token=abc"
