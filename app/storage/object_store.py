@@ -37,7 +37,10 @@ class StorageClient:
                 upload_url = parsed._replace(path=f"/storage/v1{parsed.path}").geturl()
         else:
             base = urlparse(str(self.settings.supabase_storage_url))
-            upload_url = f"{base.scheme}://{base.netloc}{signed_url}"
+            relative_path = signed_url if signed_url.startswith("/") else f"/{signed_url}"
+            if relative_path.startswith("/object/upload/sign/"):
+                relative_path = f"/storage/v1{relative_path}"
+            upload_url = f"{base.scheme}://{base.netloc}{relative_path}"
         return UploadTarget(
             bucket=bucket,
             path=path,
