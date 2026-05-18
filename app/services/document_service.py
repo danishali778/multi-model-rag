@@ -1,4 +1,5 @@
 from uuid import UUID
+from urllib.parse import urlparse
 
 from app.api.schemas.documents import (
     CreateDocumentRequest,
@@ -115,10 +116,11 @@ class DocumentService:
             bucket=self.settings.supabase_raw_bucket,
             path=path,
         )
+        normalized_upload_url = _normalize_upload_url(target.upload_url)
         return CreateUploadUrlResponse(
             bucket=target.bucket,
             path=target.path,
-            upload_url=target.upload_url,
+            upload_url=normalized_upload_url,
             document_id=document_id,
         )
 
@@ -209,6 +211,13 @@ def _public_metadata(metadata: dict, title: str, source_type: str, sensitivity: 
     public["source_type"] = source_type
     public["sensitivity"] = sensitivity
     return public
+
+
+def _normalize_upload_url(value: str) -> str:
+    parsed = urlparse(value)
+    if parsed.scheme and parsed.netloc and parsed.path.startswith("/object/upload/sign/"):
+        return parsed._replace(path=f"/storage/v1{parsed.path}").geturl()
+    return value
 
 
 def _infer_source_type(filename: str, content_type: str) -> str:

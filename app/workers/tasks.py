@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import asdict
 from typing import Any
 
 from celery import Celery
@@ -34,10 +35,16 @@ class IngestionTaskRunner:
         self.app = build_celery_app(settings)
 
     async def enqueue_ingestion_job(self, payload: IngestionTaskPayload) -> None:
-        ingest_document_job.delay(payload.__dict__)
+        if self.settings.celery_task_always_eager:
+            await _run_async_task_async("process_ingestion_payload", asdict(payload))
+            return
+        ingest_document_job.delay(asdict(payload))
 
     async def requeue_dead_letter_job(self, payload: IngestionTaskPayload) -> None:
-        requeue_dead_letter_job.delay(payload.__dict__)
+        if self.settings.celery_task_always_eager:
+            await _run_async_task_async("requeue_dead_letter_job", asdict(payload))
+            return
+        requeue_dead_letter_job.delay(asdict(payload))
 
 
 @celery_app.task(bind=True, name="ingest_document_job", max_retries=3)
@@ -85,24 +92,24 @@ def requeue_dead_letter_job(self, payload: dict[str, Any]) -> None:
 
 
 def _run_async_task(method_name: str, payload: dict[str, Any]) -> Any:
+    return asyncio.run(_run_async_task_async(method_name, payload))
+
+
+async def _run_async_task_async(method_name: str, payload: dict[str, Any]) -> Any:
     from app.core.container import AppContainer
 
     settings = get_settings()
     container = AppContainer(settings)
     task_payload = IngestionTaskPayload(**payload)
 
-    async def runner():
-        await container.db.startup()
-        try:
-            method = getattr(container.ingestion_service, method_name)
-            return await method(task_payload)
-        finally:
-            await container.db.shutdown()
-
     try:
-        return asyncio.run(runner())
+        await container.db.startup()
+        method = getattr(container.ingestion_service, method_name)
+        return await method(task_payload)
     except RetryableIngestionError as exc:
         raise exc
+    finally:
+        await container.db.shutdown()
 
 
 def _update_job_failure(
