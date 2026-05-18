@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from urllib.parse import urljoin
+from urllib.parse import urlparse
 
 import httpx
 
@@ -29,7 +29,18 @@ class StorageClient:
         signed_url = payload.get("signedURL") or payload.get("signedUrl") or payload.get("url")
         if not signed_url:
             raise ProviderUnavailableError("Supabase Storage did not return a signed upload URL.")
-        upload_url = signed_url if signed_url.startswith("http") else urljoin(str(self.settings.supabase_storage_url), signed_url)
+        if signed_url.startswith("http"):
+            parsed = urlparse(signed_url)
+            if parsed.path.startswith("/storage/v1/"):
+                upload_url = signed_url
+            else:
+                upload_url = parsed._replace(path=f"/storage/v1{parsed.path}").geturl()
+        else:
+            base = urlparse(str(self.settings.supabase_storage_url))
+            relative_path = signed_url if signed_url.startswith("/") else f"/{signed_url}"
+            if relative_path.startswith("/object/upload/sign/"):
+                relative_path = f"/storage/v1{relative_path}"
+            upload_url = f"{base.scheme}://{base.netloc}{relative_path}"
         return UploadTarget(
             bucket=bucket,
             path=path,

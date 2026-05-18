@@ -78,7 +78,7 @@ class IngestionService:
             stage="chunk",
             stats={
                 "parser_version": self.settings.parser_version,
-                "source_type": extracted.detected_source_type,
+                "source_type": extracted["source_type"],
             },
         )
         await self.chunk_and_embed_document(payload)

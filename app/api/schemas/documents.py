@@ -1,8 +1,9 @@
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlparse
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class CreateDocumentRequest(BaseModel):
@@ -35,6 +36,14 @@ class CreateUploadUrlResponse(BaseModel):
     path: str
     upload_url: str
     document_id: UUID
+
+    @field_validator("upload_url")
+    @classmethod
+    def normalize_supabase_signed_url(cls, value: str) -> str:
+        parsed = urlparse(value)
+        if parsed.scheme and parsed.netloc and parsed.path.startswith("/object/upload/sign/"):
+            return parsed._replace(path=f"/storage/v1{parsed.path}").geturl()
+        return value
 
 
 class IngestDocumentRequest(BaseModel):

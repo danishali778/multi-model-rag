@@ -1,4 +1,5 @@
 from uuid import UUID
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Query
 
@@ -36,7 +37,11 @@ async def create_upload_url(
     principal: Principal = Depends(get_current_principal),
     container: AppContainer = Depends(get_tenant_access),
 ) -> CreateUploadUrlResponse:
-    return await container.document_service.create_upload_target(tenant_id, principal, payload)
+    response = await container.document_service.create_upload_target(tenant_id, principal, payload)
+    parsed = urlparse(response.upload_url)
+    if parsed.scheme and parsed.netloc and parsed.path.startswith("/object/upload/sign/"):
+        response = response.model_copy(update={"upload_url": parsed._replace(path=f"/storage/v1{parsed.path}").geturl()})
+    return response
 
 
 @router.get("/tenants/{tenant_id}/documents", response_model=DocumentListResponse)
