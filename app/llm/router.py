@@ -16,6 +16,12 @@ from app.llm.providers.base import (
     ProviderAttempt,
     ProviderRequestError,
     RetryPolicy,
+    SpeechSynthesisResult,
+    SpeechToTextProvider,
+    TextToSpeechProvider,
+    TextToSpeechConfig,
+    SpeechToTextConfig,
+    TranscriptionResult,
 )
 
 
@@ -26,11 +32,15 @@ class ModelRouter:
         settings: Settings,
         chat_providers: dict[str, ChatProvider],
         embedding_providers: dict[str, EmbeddingProvider],
+        stt_providers: dict[str, SpeechToTextProvider] | None = None,
+        tts_providers: dict[str, TextToSpeechProvider] | None = None,
         telemetry=None,
     ):
         self.settings = settings
         self.chat_providers = chat_providers
         self.embedding_providers = embedding_providers
+        self.stt_providers = stt_providers or {}
+        self.tts_providers = tts_providers or {}
         self.telemetry = telemetry
 
     def chat_config(self, profile: str, target: ProviderTarget) -> ModelConfig:
@@ -40,6 +50,30 @@ class ModelRouter:
 
     def embedding_config(self, target: ProviderTarget) -> ModelConfig:
         return self._build_config("embedding", target)
+
+    def transcription_config(self) -> SpeechToTextConfig:
+        return SpeechToTextConfig(
+            provider=self.settings.voice_stt_provider,
+            model_name=self.settings.openai_model_transcription,
+            timeout_seconds=self.settings.voice_transcription_timeout_seconds,
+            retry_policy=RetryPolicy(
+                max_retries=self.settings.voice_stt_retry_count,
+                retryable_status_codes=self.settings.parsed_retryable_status_codes(),
+            ),
+        )
+
+    def speech_synthesis_config(self) -> TextToSpeechConfig:
+        return TextToSpeechConfig(
+            provider=self.settings.voice_tts_provider,
+            model_name=self.settings.openai_model_tts,
+            timeout_seconds=self.settings.voice_tts_timeout_seconds,
+            retry_policy=RetryPolicy(
+                max_retries=self.settings.voice_tts_retry_count,
+                retryable_status_codes=self.settings.parsed_retryable_status_codes(),
+            ),
+            voice=self.settings.openai_tts_voice,
+            audio_format=self.settings.voice_output_audio_format,
+        )
 
     async def complete_chat(self, messages: list[dict[str, str]], profile: str) -> ChatCompletion:
         chain = self.settings.profile_targets(profile)
@@ -227,6 +261,134 @@ class ModelRouter:
     async def embed(self, texts: list[str]) -> list[list[float]]:
         return (await self.embed_texts(texts)).vectors
 
+    async def transcribe_audio(
+        self,
+        *,
+        audio_bytes: bytes,
+        mime_type: str,
+        filename: str,
+    ) -> TranscriptionResult:
+        config = self.transcription_config()
+        provider = self.stt_providers.get(config.provider)
+        if provider is None:
+            raise ProviderUnavailableError(
+                "No speech-to-text provider is configured for voice transcription.",
+                details={"provider": config.provider},
+            )
+        started = time.perf_counter()
+        try:
+            result = await provider.transcribe(audio_bytes, mime_type, filename, config)
+            result.attempts = [
+                ProviderAttempt(
+                    provider=config.provider,
+                    model_name=config.model_name,
+                    status="succeeded",
+                    duration_ms=_duration_ms(started),
+                    retryable=False,
+                )
+            ]
+            if self.telemetry:
+                self.telemetry.record_model_usage(
+                    operation="transcription",
+                    provider=config.provider,
+                    profile="voice_stt",
+                    status="succeeded",
+                    estimated_cost_usd=result.estimated_cost_usd,
+                )
+            return result
+        except ProviderRequestError as exc:
+            if self.telemetry:
+                self.telemetry.record_model_usage(
+                    operation="transcription",
+                    provider=config.provider,
+                    profile="voice_stt",
+                    status="failed",
+                )
+            if exc.error_type == "auth":
+                raise ProviderAuthenticationError(
+                    f"{config.provider} speech-to-text credentials are invalid or unavailable.",
+                    details=_error_details(exc, [], "voice_stt"),
+                ) from exc
+            raise ProviderUnavailableError(
+                "Speech-to-text provider is unavailable.",
+                details=_error_details(exc, [], "voice_stt"),
+            ) from exc
+        except httpx.HTTPError as exc:
+            if self.telemetry:
+                self.telemetry.record_model_usage(
+                    operation="transcription",
+                    provider=config.provider,
+                    profile="voice_stt",
+                    status="failed",
+                )
+            raise ProviderUnavailableError(
+                "Speech-to-text provider transport error.",
+                details={"profile": "voice_stt", "message": str(exc)},
+            ) from exc
+
+    async def synthesize_speech(
+        self,
+        *,
+        text: str,
+    ) -> SpeechSynthesisResult:
+        config = self.speech_synthesis_config()
+        provider = self.tts_providers.get(config.provider)
+        if provider is None:
+            raise ProviderUnavailableError(
+                "No text-to-speech provider is configured for voice synthesis.",
+                details={"provider": config.provider},
+            )
+        started = time.perf_counter()
+        try:
+            result = await provider.synthesize(text, config)
+            result.attempts = [
+                ProviderAttempt(
+                    provider=config.provider,
+                    model_name=config.model_name,
+                    status="succeeded",
+                    duration_ms=_duration_ms(started),
+                    retryable=False,
+                )
+            ]
+            if self.telemetry:
+                self.telemetry.record_model_usage(
+                    operation="speech_synthesis",
+                    provider=config.provider,
+                    profile="voice_tts",
+                    status="succeeded",
+                    estimated_cost_usd=result.estimated_cost_usd,
+                )
+            return result
+        except ProviderRequestError as exc:
+            if self.telemetry:
+                self.telemetry.record_model_usage(
+                    operation="speech_synthesis",
+                    provider=config.provider,
+                    profile="voice_tts",
+                    status="failed",
+                )
+            if exc.error_type == "auth":
+                raise ProviderAuthenticationError(
+                    f"{config.provider} text-to-speech credentials are invalid or unavailable.",
+                    details=_error_details(exc, [], "voice_tts"),
+                ) from exc
+            raise ProviderUnavailableError(
+                "Text-to-speech provider is unavailable.",
+                details=_error_details(exc, [], "voice_tts"),
+            ) from exc
+        except httpx.HTTPError as exc:
+            if self.telemetry:
+                self.telemetry.record_model_usage(
+                    operation="speech_synthesis",
+                    provider=config.provider,
+                    profile="voice_tts",
+                    status="failed",
+                )
+            raise ProviderUnavailableError(
+                "Text-to-speech provider transport error.",
+                details={"profile": "voice_tts", "message": str(exc)},
+            ) from exc
+
     async def health_check(self) -> bool:
         checks = []
         for provider_name in {target.provider for target in self.settings.profile_targets("balanced")}:
@@ -235,6 +397,14 @@ class ModelRouter:
                 checks.append(await provider.health_check())
         for provider_name in {target.provider for target in self.settings.profile_targets("embedding")}:
             provider = self.embedding_providers.get(provider_name)
+            if provider is not None:
+                checks.append(await provider.health_check())
+        if self.stt_providers:
+            provider = self.stt_providers.get(self.settings.voice_stt_provider)
+            if provider is not None:
+                checks.append(await provider.health_check())
+        if self.tts_providers:
+            provider = self.tts_providers.get(self.settings.voice_tts_provider)
             if provider is not None:
                 checks.append(await provider.health_check())
         return all(checks) if checks else False

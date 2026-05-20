@@ -34,7 +34,19 @@ except ImportError:  # pragma: no cover - handled in constrained environments
 
     def generate_latest() -> bytes:
         lines = []
-        for metric in (REQUEST_COUNT, REQUEST_LATENCY, MODEL_CALLS, MODEL_TOKENS, MODEL_COST, INGESTION_JOBS, FEEDBACK_COUNT, RETRIEVAL_COUNT, RETRIEVAL_LATENCY):
+        for metric in (
+            REQUEST_COUNT,
+            REQUEST_LATENCY,
+            MODEL_CALLS,
+            MODEL_TOKENS,
+            MODEL_COST,
+            INGESTION_JOBS,
+            FEEDBACK_COUNT,
+            RETRIEVAL_COUNT,
+            RETRIEVAL_LATENCY,
+            VOICE_TRANSCRIPTIONS,
+            VOICE_SYNTHESIS,
+        ):
             total = sum(value for _labels, value in metric.values)
             lines.append(f"{metric.name} {total}")
         return ("\n".join(lines) + "\n").encode("utf-8")
@@ -99,6 +111,16 @@ RETRIEVAL_LATENCY = Histogram(
     "Retrieval latency.",
     ["mode"],
 )
+VOICE_TRANSCRIPTIONS = Counter(
+    "rag_voice_transcriptions_total",
+    "Voice transcription jobs by status and provider.",
+    ["status", "provider"],
+)
+VOICE_SYNTHESIS = Counter(
+    "rag_voice_synthesis_total",
+    "Voice synthesis jobs by status and provider.",
+    ["status", "provider"],
+)
 
 
 @dataclass(slots=True)
@@ -155,6 +177,12 @@ class Telemetry:
     def record_retrieval(self, *, outcome: str, mode: str, duration_seconds: float) -> None:
         RETRIEVAL_COUNT.labels(outcome=outcome).inc()
         RETRIEVAL_LATENCY.labels(mode=mode).observe(duration_seconds)
+
+    def record_voice_transcription(self, *, status: str, provider: str) -> None:
+        VOICE_TRANSCRIPTIONS.labels(status=status, provider=provider).inc()
+
+    def record_voice_synthesis(self, *, status: str, provider: str) -> None:
+        VOICE_SYNTHESIS.labels(status=status, provider=provider).inc()
 
     def metrics_payload(self) -> tuple[bytes, str]:
         return generate_latest(), CONTENT_TYPE_LATEST

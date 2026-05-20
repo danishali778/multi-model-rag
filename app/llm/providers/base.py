@@ -68,6 +68,59 @@ class EmbeddingResult:
         return len(self.attempts) or 1
 
 
+@dataclass(slots=True, frozen=True)
+class SpeechToTextConfig:
+    provider: str
+    model_name: str
+    timeout_seconds: float
+    retry_policy: RetryPolicy
+
+
+@dataclass(slots=True, frozen=True)
+class TextToSpeechConfig:
+    provider: str
+    model_name: str
+    timeout_seconds: float
+    retry_policy: RetryPolicy
+    voice: str
+    audio_format: str
+
+
+@dataclass(slots=True)
+class TranscriptionResult:
+    transcript: str
+    model_name: str
+    provider: str
+    input_duration_ms: int | None = None
+    estimated_cost_usd: float = 0.0
+    confidence: float | None = None
+    segments: list[dict[str, Any]] = field(default_factory=list)
+    attempts: list[ProviderAttempt] = field(default_factory=list)
+    fallback_used: bool = False
+    retry_count: int = 0
+
+    @property
+    def attempt_count(self) -> int:
+        return len(self.attempts) or 1
+
+
+@dataclass(slots=True)
+class SpeechSynthesisResult:
+    audio_bytes: bytes
+    model_name: str
+    provider: str
+    audio_format: str
+    output_duration_ms: int | None = None
+    estimated_cost_usd: float = 0.0
+    attempts: list[ProviderAttempt] = field(default_factory=list)
+    fallback_used: bool = False
+    retry_count: int = 0
+
+    @property
+    def attempt_count(self) -> int:
+        return len(self.attempts) or 1
+
+
 @dataclass(slots=True)
 class ProviderRequestError(Exception):
     provider: str
@@ -113,6 +166,40 @@ class EmbeddingProvider(ABC):
 
     async def count_tokens(self, text: str, model_config: ModelConfig) -> int:
         return count_tokens(text)
+
+    @abstractmethod
+    async def health_check(self) -> bool:
+        raise NotImplementedError
+
+
+class SpeechToTextProvider(ABC):
+    provider_name: str
+
+    @abstractmethod
+    async def transcribe(
+        self,
+        audio_bytes: bytes,
+        mime_type: str,
+        filename: str,
+        config: SpeechToTextConfig,
+    ) -> TranscriptionResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def health_check(self) -> bool:
+        raise NotImplementedError
+
+
+class TextToSpeechProvider(ABC):
+    provider_name: str
+
+    @abstractmethod
+    async def synthesize(
+        self,
+        text: str,
+        config: TextToSpeechConfig,
+    ) -> SpeechSynthesisResult:
+        raise NotImplementedError
 
     @abstractmethod
     async def health_check(self) -> bool:
