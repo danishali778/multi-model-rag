@@ -13,6 +13,7 @@ from app.security.auth import AuthService
 from app.security.policy import SecurityPolicyService
 from app.security.rate_limit import RateLimiter
 from app.services.admin_service import AdminService
+from app.services.auth_service import SupabaseAuthBrokerService
 from app.services.chat_service import ChatService
 from app.services.conversation_service import ConversationService
 from app.services.document_service import DocumentService
@@ -20,10 +21,12 @@ from app.services.evaluation_service import EvaluationService
 from app.services.feedback_service import FeedbackService
 from app.services.health_service import HealthService
 from app.services.ingestion_service import IngestionService
+from app.services.personal_workspace_service import PersonalWorkspaceService
 from app.services.tenant_service import TenantService
 from app.storage.db.session import Database
 from app.storage.object_store import StorageClient
 from app.storage.repositories.rag import RagRepository
+from app.storage.repositories.workspace import WorkspaceRepository
 from app.workers.tasks import IngestionTaskRunner
 
 
@@ -32,10 +35,13 @@ class AppContainer:
         self.settings = settings
         self.db = Database(settings)
         self.repository = RagRepository(self.db, settings)
+        self.workspace_repository = WorkspaceRepository(self.db, settings)
         self.storage = StorageClient(settings)
         self.parser_registry = ParserRegistry()
         self.task_runner = IngestionTaskRunner(settings)
         self.auth_service = AuthService(settings)
+        self.supabase_auth_service = SupabaseAuthBrokerService(settings)
+        self.personal_workspace_service = PersonalWorkspaceService(self.workspace_repository)
         self.telemetry = Telemetry(settings)
         self.rate_limiter = RateLimiter(settings)
         self.security_policy = SecurityPolicyService(settings)
