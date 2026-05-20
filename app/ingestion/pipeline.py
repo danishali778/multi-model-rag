@@ -1,7 +1,8 @@
 from hashlib import sha256
 from typing import Any
 
-from app.ingestion.chunking import ChunkDraft, chunk_text
+from app.domain.entities.rag import ExtractedDocument
+from app.ingestion.chunking import ChunkDraft, chunk_document, chunk_text
 
 
 def content_hash(text: str) -> str:
@@ -21,6 +22,21 @@ def build_chunks(
 ) -> list[ChunkDraft]:
     return chunk_text(
         text,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        base_metadata=metadata,
+    )
+
+
+def build_document_chunks(
+    document: ExtractedDocument,
+    *,
+    chunk_size: int,
+    chunk_overlap: int,
+    metadata: dict[str, Any],
+) -> list[ChunkDraft]:
+    return chunk_document(
+        document,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         base_metadata=metadata,
