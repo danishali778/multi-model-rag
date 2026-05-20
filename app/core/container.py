@@ -5,7 +5,12 @@ from app.llm.providers.anthropic import AnthropicChatProvider
 from app.llm.providers.groq import GroqChatProvider
 from app.llm.providers.huggingface import HuggingFaceEmbeddingProvider
 from app.llm.providers.ollama import OllamaChatProvider
-from app.llm.providers.openai import OpenAIChatProvider, OpenAIEmbeddingProvider
+from app.llm.providers.openai import (
+    OpenAIChatProvider,
+    OpenAIEmbeddingProvider,
+    OpenAITextToSpeechProvider,
+    OpenAITranscriptionProvider,
+)
 from app.llm.router import ModelRouter
 from app.retrieval.reranker import CrossEncoderReranker, NoopReranker
 from app.retrieval.retriever import RetrievalService
@@ -20,6 +25,8 @@ from app.services.feedback_service import FeedbackService
 from app.services.health_service import HealthService
 from app.services.ingestion_service import IngestionService
 from app.services.personal_workspace_service import PersonalWorkspaceService
+from app.services.voice_chat_service import VoiceChatService
+from app.services.voice_media_service import VoiceMediaService
 from app.storage.db.session import Database
 from app.storage.object_store import StorageClient
 from app.storage.repositories.audit import AuditRepository
@@ -28,6 +35,7 @@ from app.storage.repositories.document import DocumentRepository
 from app.storage.repositories.feedback import FeedbackRepository
 from app.storage.repositories.ingestion import IngestionRepository
 from app.storage.repositories.retrieval import RetrievalRepository
+from app.storage.repositories.voice import VoiceRepository
 from app.storage.repositories.workspace import WorkspaceRepository
 from app.workers.tasks import IngestionTaskRunner
 
@@ -41,9 +49,11 @@ class AppContainer:
         self.ingestion_repository = IngestionRepository(self.db, settings)
         self.retrieval_repository = RetrievalRepository(self.db, settings)
         self.conversation_repository = ConversationRepository(self.db, settings)
+        self.voice_repository = VoiceRepository(self.db, settings)
         self.feedback_repository = FeedbackRepository(self.db, settings)
         self.audit_repository = AuditRepository(self.db, settings)
         self.storage = StorageClient(settings)
+        self.voice_media_service = VoiceMediaService(storage=self.storage, settings=settings)
         self.parser_registry = ParserRegistry()
         self.task_runner = IngestionTaskRunner(settings)
         self.auth_service = AuthService(settings)
@@ -61,10 +71,14 @@ class AppContainer:
             "anthropic": AnthropicChatProvider(settings),
             "ollama": OllamaChatProvider(settings),
         }
+        self.stt_providers = {"openai": OpenAITranscriptionProvider(settings)}
+        self.tts_providers = {"openai": OpenAITextToSpeechProvider(settings)}
         self.model_router = ModelRouter(
             settings=settings,
             chat_providers=self.chat_providers,
             embedding_providers=self.embedding_providers,
+            stt_providers=self.stt_providers,
+            tts_providers=self.tts_providers,
             telemetry=self.telemetry,
         )
         self.reranker = CrossEncoderReranker(settings) if settings.reranker_enabled else NoopReranker()
@@ -96,6 +110,16 @@ class AppContainer:
             conversation_repository=self.conversation_repository,
             model_router=self.model_router,
             retrieval_service=self.retrieval_service,
+            security_policy=self.security_policy,
+            telemetry=self.telemetry,
+            settings=settings,
+        )
+        self.voice_chat_service = VoiceChatService(
+            conversation_repository=self.conversation_repository,
+            voice_repository=self.voice_repository,
+            chat_service=self.chat_service,
+            voice_media_service=self.voice_media_service,
+            model_router=self.model_router,
             security_policy=self.security_policy,
             telemetry=self.telemetry,
             settings=settings,
