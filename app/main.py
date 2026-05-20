@@ -1,9 +1,10 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.errors import register_exception_handlers
-from app.api.routes import admin, chat, conversations, documents, feedback, health, tenants
+from app.api.routes import admin, auth, chat, conversations, documents, feedback, health, tenants
 from app.core.config import settings
 from app.core.container import AppContainer
 from app.core.logging import configure_logging
@@ -24,11 +25,20 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_allowed_origin_list,
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["x-correlation-id"],
+    )
     app.add_middleware(CorrelationIdMiddleware)
     app.add_middleware(RequestSizeLimitMiddleware, max_body_bytes=settings.max_request_body_bytes)
     app.add_middleware(TelemetryMiddleware)
     register_exception_handlers(app)
     app.include_router(health.router)
+    app.include_router(auth.router, prefix="/v1", tags=["auth"])
     app.include_router(tenants.router, prefix="/v1", tags=["tenants"])
     app.include_router(documents.router, prefix="/v1", tags=["documents"])
     app.include_router(chat.router, prefix="/v1", tags=["chat"])

@@ -34,6 +34,15 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("SUPABASE_STORAGE_SERVICE_KEY", "SUPABASE_SERVICE_ROLE_KEY"),
     )
+    supabase_auth_public_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "SUPABASE_AUTH_PUBLIC_KEY",
+            "SUPABASE_PUBLISHABLE_KEY",
+            "SUPABASE_ANON_KEY",
+            "SUPABASE_SERVICE_ROLE_KEY",
+        ),
+    )
     supabase_raw_bucket: str = Field(
         default="raw-documents",
         validation_alias=AliasChoices("SUPABASE_RAW_BUCKET", "SUPABASE_RAW_DOCUMENTS_BUCKET"),
@@ -166,6 +175,10 @@ class Settings(BaseSettings):
     feedback_retention_days: int = 180
     evaluation_retention_days: int = 180
     secret_provider: str = "env"
+    cors_allowed_origins: str = Field(
+        default="http://localhost:3000,http://127.0.0.1:3000",
+        validation_alias=AliasChoices("CORS_ALLOWED_ORIGINS"),
+    )
     evaluation_dataset_path: str = "tests/fixtures/golden_dataset.json"
     evaluation_max_regression_pct: float = 0.05
     evaluation_latency_threshold_ms: int = 6_000
@@ -321,6 +334,16 @@ class Settings(BaseSettings):
     @property
     def dev_api_key_enabled(self) -> bool:
         return self.environment.lower() == "development" or self.allow_dev_api_key
+
+    @property
+    def cors_allowed_origin_list(self) -> list[str]:
+        return [item.strip() for item in self.cors_allowed_origins.split(",") if item.strip()]
+
+    @property
+    def supabase_auth_base_url(self) -> str | None:
+        if not self.supabase_storage_url:
+            return None
+        return f"{str(self.supabase_storage_url).rstrip('/')}/auth/v1"
 
     @property
     def effective_celery_broker_url(self) -> str:
