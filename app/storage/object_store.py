@@ -76,6 +76,50 @@ class StorageClient:
                 details={"status_code": response.status_code, "body": response.text[:500]},
             )
 
+    async def upload_bytes(
+        self,
+        *,
+        bucket: str,
+        path: str,
+        raw_bytes: bytes,
+        content_type: str,
+    ) -> None:
+        response = await self._request(
+            "POST",
+            f"/storage/v1/object/{bucket}/{path}",
+            content=raw_bytes,
+            headers={"content-type": content_type, "x-upsert": "true"},
+        )
+        if response.status_code >= 400:
+            raise ProviderUnavailableError(
+                "Failed to store binary artifact in Supabase Storage.",
+                details={"status_code": response.status_code, "body": response.text[:500]},
+            )
+
+    async def create_signed_download_url(
+        self,
+        *,
+        bucket: str,
+        path: str,
+        expires_in: int = 3600,
+    ) -> str:
+        response = await self._request(
+            "POST",
+            f"/storage/v1/object/sign/{bucket}/{path}",
+            json={"expiresIn": expires_in},
+        )
+        payload = response.json()
+        signed_url = payload.get("signedURL") or payload.get("signedUrl") or payload.get("url")
+        if not signed_url:
+            raise ProviderUnavailableError("Supabase Storage did not return a signed download URL.")
+        if signed_url.startswith("http"):
+            return signed_url
+        base = urlparse(str(self.settings.supabase_storage_url))
+        relative_path = signed_url if signed_url.startswith("/") else f"/{signed_url}"
+        if relative_path.startswith("/object/sign/"):
+            relative_path = f"/storage/v1{relative_path}"
+        return f"{base.scheme}://{base.netloc}{relative_path}"
+
     async def upload_to_signed_url(
         self,
         *,

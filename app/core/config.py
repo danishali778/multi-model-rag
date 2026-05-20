@@ -51,6 +51,11 @@ class Settings(BaseSettings):
         default="processed-documents",
         validation_alias=AliasChoices("SUPABASE_PROCESSED_BUCKET", "SUPABASE_PROCESSED_DOCUMENTS_BUCKET"),
     )
+    supabase_voice_bucket: str = Field(
+        default="voice-artifacts",
+        validation_alias=AliasChoices("SUPABASE_VOICE_BUCKET"),
+    )
+
     redis_url: str = Field(default="redis://localhost:6379/0", validation_alias=AliasChoices("REDIS_URL"))
     celery_broker_url: str | None = Field(default=None, validation_alias=AliasChoices("CELERY_BROKER_URL"))
     celery_result_backend: str | None = Field(default=None, validation_alias=AliasChoices("CELERY_RESULT_BACKEND"))
@@ -58,7 +63,7 @@ class Settings(BaseSettings):
     celery_max_retries: int = 3
     celery_retry_backoff_seconds: int = 30
     request_timeout_seconds: float = 120.0
-    max_request_body_bytes: int = 262_144
+    max_request_body_bytes: int = 10_485_760
 
     groq_api_key: str | None = Field(default=None, validation_alias=AliasChoices("GROQ_API_KEY"))
     groq_base_url: AnyHttpUrl = "https://api.groq.com/openai/v1"
@@ -74,6 +79,10 @@ class Settings(BaseSettings):
     openai_model_fast: str = "gpt-4o-mini"
     openai_model_balanced: str = "gpt-4.1-mini"
     openai_model_embedding: str = "text-embedding-3-small"
+    openai_model_transcription: str = "gpt-4o-mini-transcribe"
+    openai_model_tts: str = "gpt-4o-mini-tts"
+    openai_tts_voice: str = "alloy"
+
     anthropic_api_key: str | None = Field(default=None, validation_alias=AliasChoices("ANTHROPIC_API_KEY"))
     anthropic_base_url: AnyHttpUrl = "https://api.anthropic.com/v1"
     anthropic_model_fast: str = "claude-3-5-haiku-latest"
@@ -156,6 +165,17 @@ class Settings(BaseSettings):
     ingestion_allow_small_text: bool = False
     parser_version: str = "parser-v1"
     connector_framework_version: str = "connector-v1"
+    voice_enabled: bool = True
+    voice_tts_enabled: bool = True
+    voice_store_raw_input_audio: bool = False
+    voice_signed_url_ttl_seconds: int = 3600
+    voice_stt_provider: str = "openai"
+    voice_tts_provider: str = "openai"
+    voice_transcription_timeout_seconds: float = 90.0
+    voice_tts_timeout_seconds: float = 90.0
+    voice_stt_retry_count: int = 1
+    voice_tts_retry_count: int = 1
+    voice_output_audio_format: str = "mp3"
     restricted_data_allowed_profiles: str = "local"
     restricted_data_allowed_providers: str = "ollama"
     rate_limit_window_seconds: int = 60
