@@ -12,7 +12,6 @@ class CreateDocumentRequest(BaseModel):
     text: str = Field(min_length=1)
     metadata: dict[str, Any] = Field(default_factory=dict)
     sensitivity: str = Field(default="internal")
-    acl_group_ids: list[UUID] = Field(default_factory=list)
 
 
 class CreateDocumentResponse(BaseModel):
@@ -28,7 +27,6 @@ class CreateUploadUrlRequest(BaseModel):
     source_type: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     sensitivity: str = Field(default="internal")
-    acl_group_ids: list[UUID] = Field(default_factory=list)
 
 
 class CreateUploadUrlResponse(BaseModel):
@@ -85,3 +83,21 @@ class IngestionJobResponse(BaseModel):
     stats: dict[str, Any] = Field(default_factory=dict)
     error_code: str | None = None
     error_message: str | None = None
+
+
+class IngestionJobListItem(BaseModel):
+    id: UUID
+    document_id: UUID
+    status: str
+    stage: str | None = None
+    attempts: int
+    stats: dict[str, Any] = Field(default_factory=dict)
+    error_code: str | None = None
+    error_message: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class IngestionJobListResponse(BaseModel):
+    items: list[IngestionJobListItem]

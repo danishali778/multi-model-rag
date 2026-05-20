@@ -9,6 +9,7 @@ from celery import Celery
 from app.core.config import Settings, get_settings
 from app.domain.entities.rag import IngestionTaskPayload
 from app.domain.errors import RetryableIngestionError
+from app.storage.models.ingestion import IngestionJobUpdateInput
 
 
 def build_celery_app(settings: Settings | None = None) -> Celery:
@@ -128,14 +129,16 @@ def _update_job_failure(
     async def runner():
         await container.db.startup()
         try:
-            await container.repository.update_job(
+            await container.ingestion_repository.update_job(
                 payload.job_id,
-                status=status,
-                stage="failed",
-                attempts=attempts,
-                error_code="ingestion_error",
-                error_message=error_message,
-                stats=stats,
+                IngestionJobUpdateInput(
+                    status=status,
+                    stage="failed",
+                    attempts=attempts,
+                    error_code="ingestion_error",
+                    error_message=error_message,
+                    stats=stats,
+                ),
             )
             container.telemetry.record_ingestion_job(status=status, stage="failed")
         finally:

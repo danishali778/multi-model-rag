@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from uuid import UUID
 
 from fastapi import Depends, Header, Request
@@ -20,37 +20,28 @@ async def get_current_principal(
     principal = await container.auth_service.authenticate(authorization=authorization, x_api_key=x_api_key)
     await container.rate_limiter.check_request(
         principal=principal,
-        tenant_id=None,
+        workspace_id=None,
         route_key=request.url.path,
     )
     return principal
 
 
-async def get_tenant_access(
+@dataclass(slots=True)
+class WorkspaceContext:
+    container: AppContainer
+    principal: Principal
+    workspace_id: UUID
+
+
+async def get_workspace_context(
     request: Request,
-    tenant_id: UUID,
     principal: Principal = Depends(get_current_principal),
-) -> AppContainer:
-    container: AppContainer = request.app.state.container
-    await container.tenant_service.require_access(principal, tenant_id)
+    container: AppContainer = Depends(get_container),
+) -> WorkspaceContext:
+    workspace_id = await container.personal_workspace_service.resolve_workspace_for_principal(principal)
     await container.rate_limiter.check_request(
         principal=principal,
-        tenant_id=str(tenant_id),
+        workspace_id=str(workspace_id),
         route_key=request.url.path,
     )
-    return container
-
-
-async def get_admin_tenant_access(
-    request: Request,
-    tenant_id: UUID,
-    principal: Principal = Depends(get_current_principal),
-) -> AppContainer:
-    container: AppContainer = request.app.state.container
-    await container.tenant_service.require_admin_access(principal, tenant_id)
-    await container.rate_limiter.check_request(
-        principal=principal,
-        tenant_id=str(tenant_id),
-        route_key=f"admin:{request.url.path}",
-    )
-    return container
+    return WorkspaceContext(container=container, principal=principal, workspace_id=workspace_id)

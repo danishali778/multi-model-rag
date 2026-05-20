@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Any
 from uuid import UUID
 
@@ -5,39 +7,37 @@ from pydantic import BaseModel, Field
 
 
 class ChatRequest(BaseModel):
-    question: str = Field(min_length=1)
+    query: str = Field(min_length=1)
     conversation_id: UUID | None = None
-    model_profile: str = Field(default="balanced")
-    top_k: int = Field(default=5, ge=1, le=20)
-    filters: dict[str, Any] = Field(default_factory=dict)
-    stream: bool = False
-
-
-class ModelResponse(BaseModel):
-    profile: str
-    provider: str
-    name: str
+    profile: str | None = None
+    document_ids: list[UUID] | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class SourceResponse(BaseModel):
-    source_id: int
+    chunk_id: UUID | None = None
     document_id: UUID
-    chunk_id: UUID
-    title: str
-    score: float
+    document_name: str
     snippet: str
+    score: float | None = None
+    section_title: str | None = None
+    subsection_title: str | None = None
+    section_path: list[str] | None = None
+    page_number: int | None = None
+    chunk_type: str | None = None
 
 
 class UsageResponse(BaseModel):
-    input_tokens: int
-    output_tokens: int
-    estimated_cost_usd: float
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
 
 
 class ChatResponse(BaseModel):
     conversation_id: UUID
     message_id: UUID
     answer: str
-    model: ModelResponse
-    sources: list[SourceResponse]
-    usage: UsageResponse
+    sources: list[SourceResponse] = Field(default_factory=list)
+    model: str | None = None
+    usage: UsageResponse | None = None
+    metadata: dict[str, Any] | None = None

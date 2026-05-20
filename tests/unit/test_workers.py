@@ -18,7 +18,7 @@ def test_enqueue_ingestion_job_serializes_slotted_payload(monkeypatch):
     runner = IngestionTaskRunner.__new__(IngestionTaskRunner)
     runner.settings = SimpleNamespace(celery_task_always_eager=False)
     payload = IngestionTaskPayload(
-        tenant_id=uuid4(),
+        workspace_id=uuid4(),
         document_id=uuid4(),
         job_id=uuid4(),
         force_reindex=True,
@@ -26,7 +26,7 @@ def test_enqueue_ingestion_job_serializes_slotted_payload(monkeypatch):
 
     asyncio.run(runner.enqueue_ingestion_job(payload))
 
-    assert captured["payload"]["tenant_id"] == payload.tenant_id
+    assert captured["payload"]["workspace_id"] == payload.workspace_id
     assert captured["payload"]["document_id"] == payload.document_id
     assert captured["payload"]["job_id"] == payload.job_id
     assert captured["payload"]["force_reindex"] is True
@@ -48,7 +48,7 @@ def test_enqueue_ingestion_job_runs_directly_when_eager(monkeypatch):
     runner = IngestionTaskRunner.__new__(IngestionTaskRunner)
     runner.settings = SimpleNamespace(celery_task_always_eager=True)
     payload = IngestionTaskPayload(
-        tenant_id=uuid4(),
+        workspace_id=uuid4(),
         document_id=uuid4(),
         job_id=uuid4(),
     )
@@ -56,4 +56,4 @@ def test_enqueue_ingestion_job_runs_directly_when_eager(monkeypatch):
     asyncio.run(runner.enqueue_ingestion_job(payload))
 
     assert captured["method_name"] == "process_ingestion_payload"
-    assert captured["payload"]["tenant_id"] == payload.tenant_id
+    assert captured["payload"]["workspace_id"] == payload.workspace_id

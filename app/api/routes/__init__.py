@@ -1,3 +1,3 @@
-from app.api.routes import admin, auth, chat, conversations, documents, feedback, health, tenants
+from app.api.routes import auth, chat, conversations, documents, feedback, health
 
-__all__ = ["admin", "auth", "chat", "conversations", "documents", "feedback", "health", "tenants"]
+__all__ = ["auth", "chat", "conversations", "documents", "feedback", "health"]

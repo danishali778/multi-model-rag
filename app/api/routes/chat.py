@@ -1,26 +1,18 @@
-from uuid import UUID
-
 from fastapi import APIRouter, Depends
 
-from app.api.dependencies import get_current_principal, get_tenant_access
+from app.api.dependencies import WorkspaceContext, get_workspace_context
 from app.api.schemas.chat import ChatRequest, ChatResponse
-from app.core.container import AppContainer
-from app.domain.entities.rag import Principal
 
 router = APIRouter()
 
 
-@router.post("/tenants/{tenant_id}/chat", response_model=ChatResponse)
-async def chat_with_sources(
-    tenant_id: UUID,
+@router.post("/chat", response_model=ChatResponse)
+async def answer_question(
     payload: ChatRequest,
-    principal: Principal = Depends(get_current_principal),
-    container: AppContainer = Depends(get_tenant_access),
+    context: WorkspaceContext = Depends(get_workspace_context),
 ) -> ChatResponse:
-    await container.rate_limiter.check_request(
-        principal=principal,
-        tenant_id=str(tenant_id),
-        route_key="chat",
-        profile=payload.model_profile,
+    return await context.container.chat_service.answer_question(
+        workspace_id=context.workspace_id,
+        principal=context.principal,
+        payload=payload,
     )
-    return await container.chat_service.answer_question(tenant_id, principal, payload)

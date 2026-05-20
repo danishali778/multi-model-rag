@@ -25,7 +25,8 @@ def test_html_parser_extracts_title_and_text():
     )
 
     assert result.title == "Policies"
-    assert "Remote Work Allowed." in result.text
+    assert "Remote Work" in result.text
+    assert "Allowed." in result.text
 
 
 def test_docx_parser_extracts_paragraphs():

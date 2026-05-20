@@ -9,15 +9,19 @@ from app.api.schemas.conversations import (
     MessageListItem,
 )
 from app.domain.entities.rag import Principal
-from app.storage.repositories.rag import RagRepository
+from app.storage.repositories.conversation import ConversationRepository
 
 
 class ConversationService:
-    def __init__(self, repository: RagRepository):
-        self.repository = repository
+    def __init__(self, conversation_repository: ConversationRepository):
+        self.conversation_repository = conversation_repository
 
-    async def list_conversations(self, *, tenant_id: UUID, principal: Principal, limit: int) -> ConversationListResponse:
-        rows = await self.repository.list_conversations(tenant_id=tenant_id, user_id=principal.user_id, limit=limit)
+    async def list_conversations(self, *, workspace_id: UUID, principal: Principal, limit: int) -> ConversationListResponse:
+        rows = await self.conversation_repository.list_conversations(
+            workspace_id=workspace_id,
+            user_id=principal.user_id,
+            limit=limit,
+        )
         return ConversationListResponse(
             items=[
                 ConversationListItem(
@@ -33,12 +37,12 @@ class ConversationService:
     async def get_conversation_messages(
         self,
         *,
-        tenant_id: UUID,
+        workspace_id: UUID,
         conversation_id: UUID,
         principal: Principal,
     ) -> ConversationDetailResponse:
-        rows = await self.repository.list_conversation_messages(
-            tenant_id=tenant_id,
+        rows = await self.conversation_repository.list_conversation_messages(
+            workspace_id=workspace_id,
             conversation_id=conversation_id,
             user_id=principal.user_id,
         )
