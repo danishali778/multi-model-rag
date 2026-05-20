@@ -21,6 +21,6 @@ def test_rate_limiter_blocks_after_limit():
 
     import asyncio
 
-    asyncio.run(limiter.check_request(principal=principal, tenant_id="tenant", route_key="/v1/tenants"))
+    asyncio.run(limiter.check_request(principal=principal, workspace_id="workspace", route_key="/v1/chat"))
     with pytest.raises(TooManyRequestsError):
-        asyncio.run(limiter.check_request(principal=principal, tenant_id="tenant", route_key="/v1/tenants"))
+        asyncio.run(limiter.check_request(principal=principal, workspace_id="workspace", route_key="/v1/chat"))

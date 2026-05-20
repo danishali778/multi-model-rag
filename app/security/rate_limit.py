@@ -4,7 +4,6 @@ import asyncio
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Any
 
 try:
     from redis import asyncio as redis_asyncio
@@ -44,12 +43,12 @@ class RateLimiter:
         self,
         *,
         principal: Principal,
-        tenant_id: str | None,
+        workspace_id: str | None,
         route_key: str,
         profile: str | None = None,
     ) -> RateLimitDecision:
         limit = self._limit_for_profile(profile)
-        key = f"ratelimit:{tenant_id or 'global'}:{principal.user_id}:{route_key}:{profile or 'default'}"
+        key = f"ratelimit:{workspace_id or 'global'}:{principal.user_id}:{route_key}:{profile or 'default'}"
         decision = await self._check_window(key, limit, self.settings.rate_limit_window_seconds)
         if not decision.allowed:
             raise TooManyRequestsError(

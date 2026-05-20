@@ -6,10 +6,8 @@ from app.domain.errors import ProviderUnavailableError
 from app.llm.providers.base import ChatCompletion, EmbeddingResult
 from app.main import create_app
 
-DEV_TENANT_ID = "11111111-1111-1111-1111-111111111111"
-DEV_USER_ID = "00000000-0000-0000-0000-000000000001"
-DOC_PREFIX = "pytest-phase1-doc"
-CHAT_PREFIX = "pytest-phase1-chat"
+DOC_PREFIX = "pytest-b2c-doc"
+CHAT_PREFIX = "pytest-b2c-chat"
 
 
 def _cleanup_phase1_artifacts() -> None:
@@ -22,10 +20,6 @@ def _cleanup_phase1_artifacts() -> None:
             cur.execute(
                 "delete from conversations where title like %s",
                 (f"{CHAT_PREFIX}%",),
-            )
-            cur.execute(
-                "delete from document_acl_groups where document_id in (select id from documents where title like %s)",
-                (f"{DOC_PREFIX}%",),
             )
             cur.execute(
                 "delete from ingestion_jobs where document_id in (select id from documents where title like %s)",
@@ -68,20 +62,15 @@ def test_phase1_api_flow(monkeypatch):
         monkeypatch.setattr(container.model_router, "embed_texts", fake_embed_texts)
         monkeypatch.setattr(container.model_router, "complete_chat", fake_complete_chat)
 
-        tenants_response = client.get("/v1/tenants", headers=headers)
-        assert tenants_response.status_code == 200
-        assert any(item["id"] == DEV_TENANT_ID for item in tenants_response.json()["items"])
-
         document_response = client.post(
-            f"/v1/tenants/{DEV_TENANT_ID}/documents",
+            "/v1/documents",
             headers=headers,
             json={
                 "title": f"{DOC_PREFIX}-001",
                 "source_type": "text",
                 "text": "Remote work is allowed three days per week with manager approval.",
                 "metadata": {"department": "hr"},
-                "sensitivity": "internal",
-                "acl_group_ids": [],
+                "sensitivity": "internal"
             },
         )
         assert document_response.status_code == 200, document_response.text
@@ -90,55 +79,51 @@ def test_phase1_api_flow(monkeypatch):
         job_id = document_payload["ingestion_job_id"]
         assert document_payload["status"] == "indexed"
 
-        list_response = client.get(f"/v1/tenants/{DEV_TENANT_ID}/documents", headers=headers)
+        list_response = client.get("/v1/documents", headers=headers)
         assert list_response.status_code == 200
         assert any(item["id"] == document_id for item in list_response.json()["items"])
 
-        detail_response = client.get(
-            f"/v1/tenants/{DEV_TENANT_ID}/documents/{document_id}",
-            headers=headers,
-        )
+        detail_response = client.get(f"/v1/documents/{document_id}", headers=headers)
         assert detail_response.status_code == 200
         assert detail_response.json()["chunk_count"] >= 1
 
-        job_response = client.get(
-            f"/v1/tenants/{DEV_TENANT_ID}/ingestion-jobs/{job_id}",
-            headers=headers,
-        )
+        jobs_response = client.get("/v1/ingestion-jobs", headers=headers)
+        assert jobs_response.status_code == 200
+        assert any(item["id"] == job_id for item in jobs_response.json()["items"])
+
+        job_response = client.get(f"/v1/ingestion-jobs/{job_id}", headers=headers)
         assert job_response.status_code == 200
         assert job_response.json()["status"] == "succeeded"
 
         chat_response = client.post(
-            f"/v1/tenants/{DEV_TENANT_ID}/chat",
+            "/v1/chat",
             headers=headers,
             json={
-                "question": f"{CHAT_PREFIX}: What is the remote work policy?",
+                "query": f"{CHAT_PREFIX}: What is the remote work policy?",
                 "conversation_id": None,
-                "model_profile": "balanced",
-                "top_k": 5,
-                "filters": {"department": "hr"},
-                "stream": False,
+                "profile": "balanced",
+                "metadata": {"department": "hr"},
             },
         )
         assert chat_response.status_code == 200, chat_response.text
         chat_payload = chat_response.json()
-        assert chat_payload["model"]["provider"] == "groq"
+        assert chat_payload["model"].startswith("groq:")
         assert chat_payload["sources"]
         assert "[source:1]" in chat_payload["answer"]
 
-        conversations_response = client.get(f"/v1/tenants/{DEV_TENANT_ID}/conversations", headers=headers)
+        conversations_response = client.get("/v1/conversations", headers=headers)
         assert conversations_response.status_code == 200
         assert conversations_response.json()["items"]
 
         conversation_messages = client.get(
-            f"/v1/tenants/{DEV_TENANT_ID}/conversations/{chat_payload['conversation_id']}/messages",
+            f"/v1/conversations/{chat_payload['conversation_id']}/messages",
             headers=headers,
         )
         assert conversation_messages.status_code == 200
         assert len(conversation_messages.json()["items"]) == 2
 
         feedback_response = client.post(
-            f"/v1/tenants/{DEV_TENANT_ID}/messages/{chat_payload['message_id']}/feedback",
+            f"/v1/messages/{chat_payload['message_id']}/feedback",
             headers=headers,
             json={
                 "rating": 1,
@@ -148,33 +133,6 @@ def test_phase1_api_flow(monkeypatch):
         )
         assert feedback_response.status_code == 200, feedback_response.text
         assert feedback_response.json()["status"] == "recorded"
-
-        usage_response = client.get(
-            f"/v1/tenants/{DEV_TENANT_ID}/admin/usage",
-            headers=headers,
-        )
-        assert usage_response.status_code == 200, usage_response.text
-        assert usage_response.json()["totals"]["requests"] >= 2
-
-        audit_response = client.get(
-            f"/v1/tenants/{DEV_TENANT_ID}/admin/audit-logs",
-            headers=headers,
-        )
-        assert audit_response.status_code == 200
-        assert audit_response.json()["items"]
-
-        retrieval_metrics_response = client.get(
-            f"/v1/tenants/{DEV_TENANT_ID}/admin/retrieval-metrics",
-            headers=headers,
-        )
-        assert retrieval_metrics_response.status_code == 200
-
-        feedback_admin_response = client.get(
-            f"/v1/tenants/{DEV_TENANT_ID}/admin/feedback",
-            headers=headers,
-        )
-        assert feedback_admin_response.status_code == 200
-        assert feedback_admin_response.json()["items"]
 
         metrics_response = client.get("/metrics")
         assert metrics_response.status_code == 200
@@ -194,15 +152,12 @@ def test_chat_provider_failure_returns_503(monkeypatch):
         monkeypatch.setattr(container.model_router, "embed_texts", failing_embed_texts)
 
         response = client.post(
-            f"/v1/tenants/{DEV_TENANT_ID}/chat",
+            "/v1/chat",
             headers={"X-API-Key": settings.api_key},
             json={
-                "question": "What is the remote work policy?",
+                "query": "What is the remote work policy?",
                 "conversation_id": None,
-                "model_profile": "balanced",
-                "top_k": 5,
-                "filters": {},
-                "stream": False,
+                "profile": "balanced",
             },
         )
 
@@ -211,23 +166,20 @@ def test_chat_provider_failure_returns_503(monkeypatch):
     assert body["error"]["code"] == "provider_unavailable"
 
 
-def test_chat_stream_flag_returns_501():
+def test_chat_validation_rejects_legacy_payload_shape():
     app = create_app()
 
     with TestClient(app) as client:
         response = client.post(
-            f"/v1/tenants/{DEV_TENANT_ID}/chat",
+            "/v1/chat",
             headers={"X-API-Key": settings.api_key},
             json={
                 "question": "What is the remote work policy?",
                 "conversation_id": None,
                 "model_profile": "balanced",
-                "top_k": 5,
-                "filters": {},
-                "stream": True,
             },
         )
 
-    assert response.status_code == 501
+    assert response.status_code == 422
     body = response.json()
-    assert body["error"]["code"] == "not_implemented"
+    assert body["error"]["code"] == "validation_error"

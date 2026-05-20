@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.errors import register_exception_handlers
-from app.api.routes import admin, auth, chat, conversations, documents, feedback, health, tenants
+from app.api.routes import auth, chat, conversations, documents, feedback, health
 from app.core.config import settings
 from app.core.container import AppContainer
 from app.core.logging import configure_logging
@@ -39,12 +39,10 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
     app.include_router(health.router)
     app.include_router(auth.router, prefix="/v1", tags=["auth"])
-    app.include_router(tenants.router, prefix="/v1", tags=["tenants"])
     app.include_router(documents.router, prefix="/v1", tags=["documents"])
     app.include_router(chat.router, prefix="/v1", tags=["chat"])
     app.include_router(conversations.router, prefix="/v1", tags=["conversations"])
     app.include_router(feedback.router, prefix="/v1", tags=["feedback"])
-    app.include_router(admin.router, prefix="/v1", tags=["admin"])
     return app
 
 

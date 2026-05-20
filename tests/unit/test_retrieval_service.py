@@ -9,6 +9,7 @@ from app.retrieval.retriever import (
     _rewrite_query,
     _should_rewrite,
 )
+from app.storage.models.retrieval import RetrievalCandidateRow
 
 
 def _settings(**overrides) -> Settings:
@@ -41,28 +42,28 @@ def test_merge_candidates_prefers_hybrid_overlap():
     shared_id = uuid4()
     doc_id = uuid4()
     vector_rows = [
-        {
-            "id": shared_id,
-            "document_id": doc_id,
-            "chunk_index": 0,
-            "content": "Remote work policy",
-            "metadata": {},
-            "title": "Handbook",
-            "sensitivity": "internal",
-            "vector_score": 0.91,
-        }
+        RetrievalCandidateRow(
+            id=shared_id,
+            document_id=doc_id,
+            chunk_index=0,
+            content="Remote work policy",
+            metadata={},
+            title="Handbook",
+            sensitivity="internal",
+            vector_score=0.91,
+        )
     ]
     fts_rows = [
-        {
-            "id": shared_id,
-            "document_id": doc_id,
-            "chunk_index": 0,
-            "content": "Remote work policy",
-            "metadata": {},
-            "title": "Handbook",
-            "sensitivity": "internal",
-            "fts_score": 0.7,
-        }
+        RetrievalCandidateRow(
+            id=shared_id,
+            document_id=doc_id,
+            chunk_index=0,
+            content="Remote work policy",
+            metadata={},
+            title="Handbook",
+            sensitivity="internal",
+            fts_score=0.7,
+        )
     ]
 
     merged = _merge_candidates(vector_rows, fts_rows, settings)

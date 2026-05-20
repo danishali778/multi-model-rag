@@ -3,7 +3,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Query
 
-from app.api.dependencies import get_current_principal, get_tenant_access
+from app.api.dependencies import WorkspaceContext, get_workspace_context
 from app.api.schemas.documents import (
     CreateDocumentRequest,
     CreateDocumentResponse,
@@ -12,88 +12,77 @@ from app.api.schemas.documents import (
     DocumentDetailResponse,
     DocumentListResponse,
     IngestDocumentRequest,
+    IngestionJobListResponse,
     IngestionJobResponse,
 )
-from app.core.container import AppContainer
-from app.domain.entities.rag import Principal
 
 router = APIRouter()
 
 
-@router.post("/tenants/{tenant_id}/documents", response_model=CreateDocumentResponse)
+@router.post("/documents", response_model=CreateDocumentResponse)
 async def create_document(
-    tenant_id: UUID,
     payload: CreateDocumentRequest,
-    principal: Principal = Depends(get_current_principal),
-    container: AppContainer = Depends(get_tenant_access),
+    context: WorkspaceContext = Depends(get_workspace_context),
 ) -> CreateDocumentResponse:
-    return await container.document_service.create_text_document(tenant_id, principal, payload)
+    return await context.container.document_service.create_text_document(context.workspace_id, context.principal, payload)
 
 
-@router.post("/tenants/{tenant_id}/documents/upload-url", response_model=CreateUploadUrlResponse)
+@router.post("/documents/upload-url", response_model=CreateUploadUrlResponse)
 async def create_upload_url(
-    tenant_id: UUID,
     payload: CreateUploadUrlRequest,
-    principal: Principal = Depends(get_current_principal),
-    container: AppContainer = Depends(get_tenant_access),
+    context: WorkspaceContext = Depends(get_workspace_context),
 ) -> CreateUploadUrlResponse:
-    response = await container.document_service.create_upload_target(tenant_id, principal, payload)
+    response = await context.container.document_service.create_upload_target(context.workspace_id, context.principal, payload)
     parsed = urlparse(response.upload_url)
     if parsed.scheme and parsed.netloc and parsed.path.startswith("/object/upload/sign/"):
         response = response.model_copy(update={"upload_url": parsed._replace(path=f"/storage/v1{parsed.path}").geturl()})
     return response
 
 
-@router.get("/tenants/{tenant_id}/documents", response_model=DocumentListResponse)
+@router.get("/documents", response_model=DocumentListResponse)
 async def list_documents(
-    tenant_id: UUID,
     status: str | None = Query(default=None),
     source_type: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
-    principal: Principal = Depends(get_current_principal),
-    container: AppContainer = Depends(get_tenant_access),
+    context: WorkspaceContext = Depends(get_workspace_context),
 ) -> DocumentListResponse:
-    return await container.document_service.list_documents(
-        tenant_id=tenant_id,
-        principal=principal,
+    return await context.container.document_service.list_documents(
+        workspace_id=context.workspace_id,
+        principal=context.principal,
         status=status,
         source_type=source_type,
         limit=limit,
     )
 
 
-@router.get("/tenants/{tenant_id}/documents/{document_id}", response_model=DocumentDetailResponse)
+@router.get("/documents/{document_id}", response_model=DocumentDetailResponse)
 async def get_document(
-    tenant_id: UUID,
     document_id: UUID,
-    principal: Principal = Depends(get_current_principal),
-    container: AppContainer = Depends(get_tenant_access),
+    context: WorkspaceContext = Depends(get_workspace_context),
 ) -> DocumentDetailResponse:
-    return await container.document_service.get_document(tenant_id, document_id, principal)
+    return await context.container.document_service.get_document(context.workspace_id, document_id, context.principal)
 
 
-@router.post(
-    "/tenants/{tenant_id}/documents/{document_id}/ingest",
-    response_model=IngestionJobResponse,
-)
+@router.post("/documents/{document_id}/ingest", response_model=IngestionJobResponse)
 async def ingest_document(
-    tenant_id: UUID,
     document_id: UUID,
     payload: IngestDocumentRequest,
-    principal: Principal = Depends(get_current_principal),
-    container: AppContainer = Depends(get_tenant_access),
+    context: WorkspaceContext = Depends(get_workspace_context),
 ) -> IngestionJobResponse:
-    return await container.document_service.reingest_document(tenant_id, document_id, payload, principal)
+    return await context.container.document_service.reingest_document(context.workspace_id, document_id, payload, context.principal)
 
 
-@router.get(
-    "/tenants/{tenant_id}/ingestion-jobs/{job_id}",
-    response_model=IngestionJobResponse,
-)
+@router.get("/ingestion-jobs", response_model=IngestionJobListResponse)
+async def list_ingestion_jobs(
+    limit: int = Query(default=50, ge=1, le=200),
+    context: WorkspaceContext = Depends(get_workspace_context),
+) -> IngestionJobListResponse:
+    return await context.container.document_service.list_jobs(context.workspace_id, context.principal, limit=limit)
+
+
+@router.get("/ingestion-jobs/{job_id}", response_model=IngestionJobResponse)
 async def get_ingestion_job(
-    tenant_id: UUID,
     job_id: UUID,
-    principal: Principal = Depends(get_current_principal),
-    container: AppContainer = Depends(get_tenant_access),
+    context: WorkspaceContext = Depends(get_workspace_context),
 ) -> IngestionJobResponse:
-    return await container.document_service.get_job(tenant_id, job_id, principal)
+    return await context.container.document_service.get_job(context.workspace_id, job_id, context.principal)

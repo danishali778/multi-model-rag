@@ -51,7 +51,6 @@ class Settings(BaseSettings):
         default="processed-documents",
         validation_alias=AliasChoices("SUPABASE_PROCESSED_BUCKET", "SUPABASE_PROCESSED_DOCUMENTS_BUCKET"),
     )
-
     redis_url: str = Field(default="redis://localhost:6379/0", validation_alias=AliasChoices("REDIS_URL"))
     celery_broker_url: str | None = Field(default=None, validation_alias=AliasChoices("CELERY_BROKER_URL"))
     celery_result_backend: str | None = Field(default=None, validation_alias=AliasChoices("CELERY_RESULT_BACKEND"))
@@ -75,7 +74,6 @@ class Settings(BaseSettings):
     openai_model_fast: str = "gpt-4o-mini"
     openai_model_balanced: str = "gpt-4.1-mini"
     openai_model_embedding: str = "text-embedding-3-small"
-
     anthropic_api_key: str | None = Field(default=None, validation_alias=AliasChoices("ANTHROPIC_API_KEY"))
     anthropic_base_url: AnyHttpUrl = "https://api.anthropic.com/v1"
     anthropic_model_fast: str = "claude-3-5-haiku-latest"

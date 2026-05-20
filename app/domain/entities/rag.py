@@ -22,6 +22,11 @@ class SourceCitation:
     title: str
     score: float
     snippet: str
+    section_title: str | None = None
+    subsection_title: str | None = None
+    section_path: list[str] = field(default_factory=list)
+    page_number: int | None = None
+    chunk_type: str | None = None
 
 
 @dataclass(slots=True)
@@ -50,7 +55,7 @@ class ChatResult:
 
 @dataclass(slots=True)
 class RetrievalRequest:
-    tenant_id: UUID
+    workspace_id: UUID
     user_id: UUID
     question: str
     filters: dict[str, Any]
@@ -68,6 +73,13 @@ class RetrievalCandidate:
     content: str
     metadata: dict[str, Any]
     sensitivity: str
+    parent_block_id: UUID | None = None
+    page_number: int | None = None
+    chunk_type: str | None = None
+    section_title: str | None = None
+    subsection_title: str | None = None
+    section_path: list[str] = field(default_factory=list)
+    parent_content: str | None = None
     vector_score: float | None = None
     fts_score: float | None = None
     fused_score: float = 0.0
@@ -103,17 +115,32 @@ class UploadTarget:
 
 
 @dataclass(slots=True)
+class ExtractedBlock:
+    id: UUID
+    block_type: str
+    text: str
+    page_number: int | None
+    heading_level: int | None
+    section_path: list[str]
+    order_index: int
+    parent_block_id: UUID | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class ExtractedDocument:
     text: str
     detected_source_type: str
     title: str | None
     metadata: dict[str, Any]
+    blocks: list[ExtractedBlock] = field(default_factory=list)
+    section_tree: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
 class IngestionTaskPayload:
-    tenant_id: UUID
+    workspace_id: UUID
     document_id: UUID
     job_id: UUID
     force_reindex: bool = False
@@ -123,7 +150,7 @@ class IngestionTaskPayload:
 
 @dataclass(slots=True)
 class ConnectorCheckpoint:
-    tenant_id: UUID
+    workspace_id: UUID
     connector_type: str
     source_key: str
     cursor: dict[str, Any]
@@ -131,14 +158,14 @@ class ConnectorCheckpoint:
 
 @dataclass(slots=True)
 class ConnectorSyncRequest:
-    tenant_id: UUID
+    workspace_id: UUID
     connector_type: str
     source_key: str
     cursor: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
-class TenantSummary:
+class WorkspaceSummary:
     id: UUID
     name: str
     slug: str
@@ -148,7 +175,7 @@ class TenantSummary:
 @dataclass(slots=True)
 class DocumentRecord:
     id: UUID
-    tenant_id: UUID
+    workspace_id: UUID
     title: str
     source_type: str
     status: str
@@ -162,7 +189,7 @@ class DocumentRecord:
 @dataclass(slots=True)
 class FeedbackRecord:
     id: UUID
-    tenant_id: UUID
+    workspace_id: UUID
     message_id: UUID | None
     conversation_id: UUID | None
     user_id: UUID | None
@@ -234,16 +261,20 @@ class EvaluationDatasetItem:
     required_document_ids: list[str]
     acceptable_chunk_ids: list[str]
     difficulty: str
-    tenant_id: str
+    workspace_id: str
     user_id: str
     filters: dict[str, Any] = field(default_factory=dict)
     expected_no_source_reason: str | None = None
+    expected_section_path: list[str] = field(default_factory=list)
+    expected_page_number: int | None = None
+    expected_chunk_type: str | None = None
+    bad_example_label: str | None = None
 
 
 @dataclass(slots=True)
 class EvaluationRunSummary:
     id: UUID
-    tenant_id: UUID
+    workspace_id: UUID
     run_type: str
     model_profile: str
     metrics: dict[str, Any]
