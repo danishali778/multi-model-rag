@@ -197,7 +197,7 @@ class Settings(BaseSettings):
         default="http://localhost:3000,http://127.0.0.1:3000",
         validation_alias=AliasChoices("CORS_ALLOWED_ORIGINS"),
     )
-    evaluation_dataset_path: str = "tests/fixtures/golden_dataset.json"
+    evaluation_dataset_path: str = "tests/evaluation/datasets/golden_dataset.json"
     evaluation_max_regression_pct: float = 0.05
     evaluation_latency_threshold_ms: int = 6_000
     evaluation_cost_threshold_usd: float = 2.50
