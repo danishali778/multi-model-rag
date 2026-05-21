@@ -1,4 +1,5 @@
 import psycopg
+import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
@@ -11,28 +12,34 @@ CHAT_PREFIX = "pytest-b2c-chat"
 
 
 def _cleanup_phase1_artifacts() -> None:
-    with psycopg.connect(settings.supabase_db_url, autocommit=True) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "delete from messages where conversation_id in (select id from conversations where title like %s)",
-                (f"{CHAT_PREFIX}%",),
-            )
-            cur.execute(
-                "delete from conversations where title like %s",
-                (f"{CHAT_PREFIX}%",),
-            )
-            cur.execute(
-                "delete from ingestion_jobs where document_id in (select id from documents where title like %s)",
-                (f"{DOC_PREFIX}%",),
-            )
-            cur.execute(
-                "delete from document_chunks where document_id in (select id from documents where title like %s)",
-                (f"{DOC_PREFIX}%",),
-            )
-            cur.execute("delete from documents where title like %s", (f"{DOC_PREFIX}%",))
+    if not settings.supabase_db_url:
+        pytest.skip("Integration DB URL is not configured.")
+    try:
+        with psycopg.connect(settings.supabase_db_url, autocommit=True) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "delete from messages where conversation_id in (select id from conversations where title like %s)",
+                    (f"{CHAT_PREFIX}%",),
+                )
+                cur.execute(
+                    "delete from conversations where title like %s",
+                    (f"{CHAT_PREFIX}%",),
+                )
+                cur.execute(
+                    "delete from ingestion_jobs where document_id in (select id from documents where title like %s)",
+                    (f"{DOC_PREFIX}%",),
+                )
+                cur.execute(
+                    "delete from document_chunks where document_id in (select id from documents where title like %s)",
+                    (f"{DOC_PREFIX}%",),
+                )
+                cur.execute("delete from documents where title like %s", (f"{DOC_PREFIX}%",))
+    except psycopg.OperationalError as exc:
+        pytest.skip(f"Integration database is unreachable: {exc}")
 
 
 def test_phase1_api_flow(monkeypatch):
+    _cleanup_phase1_artifacts()
     app = create_app()
 
     async def fake_embed_texts(texts: list[str]) -> EmbeddingResult:
@@ -54,7 +61,6 @@ def test_phase1_api_flow(monkeypatch):
             estimated_cost_usd=0.0,
         )
 
-    _cleanup_phase1_artifacts()
     headers = {"X-API-Key": settings.api_key}
 
     with TestClient(app) as client:
@@ -142,6 +148,7 @@ def test_phase1_api_flow(monkeypatch):
 
 
 def test_chat_provider_failure_returns_503(monkeypatch):
+    _cleanup_phase1_artifacts()
     app = create_app()
 
     async def failing_embed_texts(texts: list[str]) -> EmbeddingResult:
@@ -167,6 +174,7 @@ def test_chat_provider_failure_returns_503(monkeypatch):
 
 
 def test_chat_validation_rejects_legacy_payload_shape():
+    _cleanup_phase1_artifacts()
     app = create_app()
 
     with TestClient(app) as client:
