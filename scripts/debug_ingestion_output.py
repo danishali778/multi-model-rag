@@ -146,6 +146,7 @@ async def print_blocks(cursor: Any, document_id: str, preview_length: int) -> No
             subsection_title,
             section_path,
             parent_block_id,
+            metadata,
             text
         from document_blocks
         where document_id = %s::uuid
@@ -160,7 +161,15 @@ async def print_blocks(cursor: Any, document_id: str, preview_length: int) -> No
         print("No document_blocks rows found.")
         return
 
+    kind_counts: dict[str, int] = {}
     for row in rows:
+        metadata = row["metadata"] or {}
+        content_kind = metadata.get("content_kind") or row["block_type"]
+        kind_counts[content_kind] = kind_counts.get(content_kind, 0) + 1
+    print(f"block_kind_counts={json.dumps(kind_counts, sort_keys=True)}")
+
+    for row in rows:
+        metadata = row["metadata"] or {}
         print("-" * 80)
         print(
             f"order={row['order_index']} "
@@ -172,6 +181,14 @@ async def print_blocks(cursor: Any, document_id: str, preview_length: int) -> No
         print(f"subsection_title={row['subsection_title']}")
         print(f"section_path={json.dumps(row['section_path'] or [])}")
         print(f"parent_block_id={row['parent_block_id']}")
+        print(
+            "content_kind="
+            f"{metadata.get('content_kind')} "
+            f"table_id={metadata.get('table_id')} "
+            f"equation_id={metadata.get('equation_id')} "
+            f"algorithm_id={metadata.get('algorithm_id')} "
+            f"caption_label={metadata.get('caption_label')}"
+        )
         print(preview_text(row["text"], preview_length))
 
 
@@ -193,6 +210,7 @@ async def print_chunks(cursor: Any, document_id: str, preview_length: int) -> No
         "block_order_start",
         "block_order_end",
         "token_count",
+        "metadata",
         "content",
         "created_at",
     }
@@ -223,6 +241,7 @@ async def print_chunks(cursor: Any, document_id: str, preview_length: int) -> No
             block_order_start,
             block_order_end,
             token_count,
+            metadata,
             content
         from document_chunks
         where document_id = %s::uuid
@@ -240,7 +259,15 @@ async def print_chunks(cursor: Any, document_id: str, preview_length: int) -> No
         print("No document_chunks rows found.")
         return
 
+    kind_counts: dict[str, int] = {}
     for row in rows:
+        metadata = row["metadata"] or {}
+        content_kind = metadata.get("content_kind") or row["chunk_type"]
+        kind_counts[content_kind] = kind_counts.get(content_kind, 0) + 1
+    print(f"chunk_kind_counts={json.dumps(kind_counts, sort_keys=True)}")
+
+    for row in rows:
+        metadata = row["metadata"] or {}
         print("=" * 80)
         print(
             f"id={row['id']} "
@@ -254,6 +281,14 @@ async def print_chunks(cursor: Any, document_id: str, preview_length: int) -> No
         print(f"section_path={json.dumps(row['section_path'] or [])}")
         print(f"parent_block_id={row['parent_block_id']}")
         print(f"block_range={row['block_order_start']}..{row['block_order_end']}")
+        print(
+            "content_kind="
+            f"{metadata.get('content_kind')} "
+            f"group={metadata.get('structure_group_id')} "
+            f"caption_label={metadata.get('caption_label')} "
+            f"equation_label={metadata.get('equation_label')} "
+            f"algorithm_label={metadata.get('algorithm_label')}"
+        )
         print(preview_text(row["content"], preview_length))
 
 
