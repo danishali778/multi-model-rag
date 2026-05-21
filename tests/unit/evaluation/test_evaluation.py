@@ -4,14 +4,14 @@ from app.evaluation.runner import EvaluationRunner, PredictionSample
 
 
 def test_golden_dataset_loader_reads_fixture():
-    repo = GoldenDatasetRepository("tests/fixtures/golden_dataset.json")
+    repo = GoldenDatasetRepository("tests/evaluation/datasets/golden_dataset.json")
     items = repo.load()
     assert len(items) == 1
     assert items[0].question == "What is the remote work policy?"
 
 
 def test_evaluation_runner_returns_metrics():
-    repo = GoldenDatasetRepository("tests/fixtures/golden_dataset.json")
+    repo = GoldenDatasetRepository("tests/evaluation/datasets/golden_dataset.json")
     items = repo.load()
     runner = EvaluationRunner()
     result = runner.run_retrieval_evaluation(items)
