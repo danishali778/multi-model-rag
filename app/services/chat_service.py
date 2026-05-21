@@ -6,7 +6,7 @@ from uuid import UUID
 from app.api.schemas.chat import ChatRequest, ChatResponse, SourceResponse, UsageResponse
 from app.domain.entities.rag import Principal, RetrievalRequest, SourceCitation, UsageStats
 from app.domain.errors import NotFoundError
-from app.llm.prompts import build_messages
+from app.llm.grounded_answering import answer_grounded_question
 from app.storage.models.conversation import ConversationCreateInput, MessageCreateInput
 
 
@@ -95,8 +95,17 @@ class ChatService:
             selected_sources=decision.selected_sources,
         )
 
-        messages = build_messages(query, decision.context.source_blocks)
-        completion = await self._model_router.complete_chat(messages, profile)
+        answer_result = await answer_grounded_question(
+            model_router=self._model_router,
+            question=query,
+            source_blocks=decision.context.source_blocks,
+            profile=profile,
+            query_class=decision.query_class,
+            retrieval_metadata={
+                "candidate_counts": decision.candidate_counts,
+                "strategy_name": decision.strategy_name,
+            },
+        )
         sources = [
             SourceCitation(
                 source_id=index,
@@ -114,9 +123,9 @@ class ChatService:
             for index, candidate in enumerate(decision.selected_sources, start=1)
         ]
         usage = UsageStats(
-            input_tokens=completion.input_tokens,
-            output_tokens=completion.output_tokens,
-            estimated_cost_usd=completion.estimated_cost_usd,
+            input_tokens=answer_result.input_tokens,
+            output_tokens=answer_result.output_tokens,
+            estimated_cost_usd=answer_result.estimated_cost_usd,
         )
 
         if conversation_id is None:
@@ -155,7 +164,7 @@ class ChatService:
             MessageCreateInput(
                 conversation_id=conversation_id,
                 role="assistant",
-                content=completion.answer,
+                content=answer_result.answer,
                 model_profile=profile,
                 sources=[_source_payload(source) for source in sources],
                 token_usage={
@@ -171,9 +180,9 @@ class ChatService:
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=message_id,
-            answer=completion.answer,
+            answer=answer_result.answer,
             sources=sources,
-            model=f"{completion.provider}:{completion.model_name}",
+            model=f"{answer_result.provider}:{answer_result.model_name}",
             usage=usage,
             metadata={
                 "profile": profile,
@@ -182,6 +191,12 @@ class ChatService:
                 "reranker_used": decision.reranker_used,
                 "candidate_counts": decision.candidate_counts,
                 "no_source_reason": decision.no_source_reason,
+                "query_class": decision.query_class,
+                "strategy_name": decision.strategy_name,
+                "rewritten_query": decision.rewritten_query,
+                "prompt_family": answer_result.prompt_family,
+                "verification_used": answer_result.verification_used,
+                "verification_outcome": answer_result.verification_outcome,
             },
         )
 

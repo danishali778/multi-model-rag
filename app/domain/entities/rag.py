@@ -83,6 +83,7 @@ class RetrievalCandidate:
     vector_score: float | None = None
     fts_score: float | None = None
     fused_score: float = 0.0
+    selection_role: str | None = None
 
 
 @dataclass(slots=True)
@@ -91,6 +92,7 @@ class ContextAssemblyResult:
     source_blocks: list[str]
     total_tokens: int
     dropped_reasons: list[str]
+    assembly_policy: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -104,6 +106,10 @@ class RetrievalDecision:
     candidate_counts: dict[str, int]
     retrieval_config_version: str
     reranker_model: str | None = None
+    query_class: str = "fact"
+    strategy_name: str = "hybrid"
+    query_features: dict[str, Any] = field(default_factory=dict)
+    rewritten_query: str | None = None
 
 
 @dataclass(slots=True)
