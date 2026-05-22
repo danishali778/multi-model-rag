@@ -105,6 +105,8 @@ def _build_groups(blocks: list[ExtractedBlock]) -> list[dict[str, Any]]:
     groups: list[dict[str, Any]] = []
     current: dict[str, Any] | None = None
     for block in sorted(blocks, key=lambda item: item.order_index):
+        if block.metadata.get("exclude_from_chunking"):
+            continue
         if block.block_type == "heading":
             current = None
             continue
@@ -263,6 +265,16 @@ def _build_table_chunks(
     common_metadata["caption_label"] = caption_block.metadata.get("caption_label") if caption_block else None
     common_metadata["table_id"] = _structure_group_id(caption_block or row_blocks[0])
     common_metadata["table_headers"] = _merged_table_headers(row_blocks)
+    common_metadata["table_parse_status"] = (
+        caption_block.metadata.get("table_parse_status")
+        if caption_block
+        else (row_blocks[0].metadata.get("table_parse_status") if row_blocks else None)
+    )
+    common_metadata["docling_table_shape"] = (
+        caption_block.metadata.get("docling_table_shape")
+        if caption_block
+        else (row_blocks[0].metadata.get("docling_table_shape") if row_blocks else None)
+    )
     parent_block_id = group["parent_block_id"]
     parent_chunk = ChunkDraft(
         chunk_index=next_index,
@@ -287,6 +299,10 @@ def _build_table_chunks(
         child_metadata["parent_chunk_index"] = parent_chunk.chunk_index
         child_metadata["content_kind"] = row_block.metadata.get("content_kind", "table_row")
         child_metadata["row_index"] = row_block.metadata.get("row_index")
+        child_metadata["table_parse_status"] = row_block.metadata.get(
+            "table_parse_status",
+            common_metadata.get("table_parse_status"),
+        )
         child_text = _render_table_row_chunk(caption_text, child_metadata.get("table_headers", []), row_block.text)
         chunks.append(
             ChunkDraft(

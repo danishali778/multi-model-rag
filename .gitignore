@@ -27,3 +27,16 @@ data/
 
 .DS_Store
 Thumbs.db
+
+.vscode/
+
+frontend/.next/
+frontend/node_modules/
+frontend/tsconfig.tsbuildinfo
+
+tests/manual/representation/*.txt
+tests/manual/representation/*.json
+
+tests/evaluation/results/*.csv
+tests/evaluation/results/*.json
+tests/evaluation/runs/*.json
