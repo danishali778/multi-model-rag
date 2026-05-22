@@ -59,7 +59,7 @@ async def main() -> None:
 async def fetch_document_by_id(cursor: Any, document_id: str) -> dict[str, Any] | None:
     await cursor.execute(
         """
-        select id, title, created_at
+        select id, title, metadata, created_at
         from documents
         where id = %s::uuid
         """,
@@ -122,6 +122,9 @@ async def inspect_document(cursor: Any, document_id: str, preview_length: int) -
     print(f"Document: {meta['title']}")
     print(f"ID: {meta['id']}")
     print(f"Created: {meta['created_at']}")
+    parser_diagnostics = (meta.get("metadata") or {}).get("parser_diagnostics") or {}
+    if parser_diagnostics:
+        print(f"parser_diagnostics={json.dumps(parser_diagnostics, sort_keys=True)}")
     print()
 
     await print_blocks(cursor, document_id, preview_length)
@@ -187,7 +190,14 @@ async def print_blocks(cursor: Any, document_id: str, preview_length: int) -> No
             f"table_id={metadata.get('table_id')} "
             f"equation_id={metadata.get('equation_id')} "
             f"algorithm_id={metadata.get('algorithm_id')} "
-            f"caption_label={metadata.get('caption_label')}"
+            f"caption_label={metadata.get('caption_label')} "
+            f"table_parse_status={metadata.get('table_parse_status')} "
+            f"promoted_decimal={metadata.get('normalization_promoted_decimal_subsection')} "
+            f"merged_equation_fragments={metadata.get('merged_equation_fragments')} "
+            f"equation_fragment_orphan={metadata.get('equation_fragment_orphan')} "
+            f"reused_table_headers={metadata.get('reused_table_headers')} "
+            f"exclude_from_chunking={metadata.get('exclude_from_chunking')} "
+            f"exclude_from_retrieval={metadata.get('exclude_from_retrieval')}"
         )
         print(preview_text(row["text"], preview_length))
 
@@ -287,7 +297,8 @@ async def print_chunks(cursor: Any, document_id: str, preview_length: int) -> No
             f"group={metadata.get('structure_group_id')} "
             f"caption_label={metadata.get('caption_label')} "
             f"equation_label={metadata.get('equation_label')} "
-            f"algorithm_label={metadata.get('algorithm_label')}"
+            f"algorithm_label={metadata.get('algorithm_label')} "
+            f"table_parse_status={metadata.get('table_parse_status')}"
         )
         print(preview_text(row["content"], preview_length))
 
