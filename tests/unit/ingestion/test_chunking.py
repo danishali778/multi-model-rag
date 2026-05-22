@@ -161,7 +161,13 @@ def test_chunk_document_builds_table_and_equation_specific_chunks():
                 section_path=["X. RESULTS AND DISCUSSION"],
                 order_index=1,
                 parent_block_id=table_parent,
-                metadata={"content_kind": "table_caption", "table_id": table_id, "caption_label": "TABLE I"},
+                metadata={
+                    "content_kind": "table_caption",
+                    "table_id": table_id,
+                    "caption_label": "TABLE I",
+                    "table_parse_status": "row_backed",
+                    "docling_table_shape": "dataframe",
+                },
             ),
             ExtractedBlock(
                 id=uuid4(),
@@ -172,7 +178,14 @@ def test_chunk_document_builds_table_and_equation_specific_chunks():
                 section_path=["X. RESULTS AND DISCUSSION"],
                 order_index=2,
                 parent_block_id=table_parent,
-                metadata={"content_kind": "table_row", "table_id": table_id, "table_headers": ["Metric", "Baseline", "BDPP-IoT"], "row_index": 0},
+                metadata={
+                    "content_kind": "table_row",
+                    "table_id": table_id,
+                    "table_headers": ["Metric", "Baseline", "BDPP-IoT"],
+                    "row_index": 0,
+                    "table_parse_status": "row_backed",
+                    "docling_table_shape": "dataframe",
+                },
             ),
             ExtractedBlock(
                 id=equation_parent,
@@ -212,6 +225,62 @@ def test_chunk_document_builds_table_and_equation_specific_chunks():
     assert "Headers: Metric, Baseline, BDPP-IoT" in table_child_chunk.content
     assert "Row: MAE 100.27 11.21" in table_child_chunk.content
     assert table_child_chunk.metadata["structure_group_id"] == table_id
+    assert table_child_chunk.metadata["table_parse_status"] == "row_backed"
     assert "Improvement% = 88.8128% (50)" in equation_parent_chunk.content
     assert "where Improvement measures performance gain" in equation_child_chunk.content
     assert equation_child_chunk.metadata["equation_label"] == "50"
+
+
+def test_chunk_document_skips_front_matter_blocks_marked_for_exclusion():
+    document = ExtractedDocument(
+        text="Paper",
+        detected_source_type="pdf",
+        title="Paper",
+        metadata={},
+        blocks=[
+            ExtractedBlock(
+                id=uuid4(),
+                block_type="paragraph",
+                text="Danish Ali Department of Artificial Intelligence",
+                page_number=1,
+                heading_level=None,
+                section_path=[],
+                order_index=0,
+                parent_block_id=None,
+                metadata={
+                    "content_kind": "front_matter",
+                    "exclude_from_chunking": True,
+                    "exclude_from_retrieval": True,
+                },
+            ),
+            ExtractedBlock(
+                id=uuid4(),
+                block_type="heading",
+                text="Abstract",
+                page_number=1,
+                heading_level=1,
+                section_path=["Abstract"],
+                order_index=1,
+                parent_block_id=None,
+                metadata={},
+            ),
+            ExtractedBlock(
+                id=uuid4(),
+                block_type="paragraph",
+                text="This paper proposes a privacy-preserving framework.",
+                page_number=1,
+                heading_level=None,
+                section_path=["Abstract"],
+                order_index=2,
+                parent_block_id=None,
+                metadata={"content_kind": "paragraph"},
+            ),
+        ],
+        section_tree=[],
+        warnings=[],
+    )
+
+    chunks = chunk_document(document=document, chunk_size=200, chunk_overlap=20)
+
+    assert all("Danish Ali" not in chunk.content for chunk in chunks)
+    assert any("privacy-preserving framework" in chunk.content for chunk in chunks)

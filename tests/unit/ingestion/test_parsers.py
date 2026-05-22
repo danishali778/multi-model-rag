@@ -1,15 +1,16 @@
 from io import BytesIO
-from pathlib import Path
-from zipfile import ZipFile
 from types import SimpleNamespace
+from zipfile import ZipFile
 
-from pypdf import PdfWriter
-
-import app.ingestion.parsers.pdf as pdf_module
 from app.ingestion.parsers.docx import DocxParser
 from app.ingestion.parsers.html import HtmlParser
 from app.ingestion.parsers.markdown import MarkdownParser
-from app.ingestion.parsers.pdf import PdfParser
+from app.ingestion.parsers.pdf import (
+    DoclingNormalizedItem,
+    DoclingParseResult,
+    PdfParser,
+    _DoclingAdapter,
+)
 
 
 def test_markdown_parser_extracts_text_and_title():
@@ -41,94 +42,361 @@ def test_docx_parser_extracts_paragraphs():
     assert "Remote work is allowed." in result.text
 
 
-def test_pdf_parser_extracts_metadata_from_blank_pdf():
-    parser = PdfParser()
-    writer = PdfWriter()
-    writer.add_blank_page(width=200, height=200)
-    buffer = BytesIO()
-    writer.write(buffer)
-
-    result = parser.parse(buffer.getvalue(), {"filename": "policy.pdf"})
-
-    assert result.detected_source_type == "pdf"
-    assert result.metadata["page_count"] == 1
-
-
-def test_pdf_parser_preserves_later_page_section_structure_for_fixture():
-    parser = PdfParser()
-    fixture = Path("tests/fixtures/documents/complex_eval_report.pdf")
-
-    result = parser.parse(fixture.read_bytes(), {"filename": fixture.name})
-
-    headings = [block.text for block in result.blocks if block.block_type == "heading"]
-    assert "3. Customer Support and Satisfaction" in headings
-    assert "4. Workforce Readiness and Training" in headings
-    assert "6. Risk, Compliance, and Governance" in headings
-
-    customer_block = next(
-        block for block in result.blocks if block.block_type == "paragraph" and "6,842 inbound requests" in block.text
-    )
-    training_block = next(
-        block for block in result.blocks if block.block_type == "paragraph" and "Mandatory training completion reached 97 percent" in block.text
+def test_pdf_parser_maps_docling_parse_result_to_blocks_and_metadata():
+    items = [
+        DoclingNormalizedItem(kind="heading", text="Abstract", page_number=1, heading_level=1),
+        DoclingNormalizedItem(
+            kind="paragraph",
+            text="This paper proposes a privacy-preserving framework.",
+            page_number=1,
+        ),
+        DoclingNormalizedItem(kind="heading", text="I. INTRODUCTION", page_number=2, heading_level=1),
+        DoclingNormalizedItem(kind="paragraph", text="IoT systems face data privacy risks.", page_number=2),
+    ]
+    parser = PdfParser(
+        adapter=_FakeAdapter(
+            DoclingParseResult(title="Technical Paper", page_count=2, items=items, warnings=["parser-note"])
+        )
     )
 
-    assert customer_block.section_path == ["3. Customer Support and Satisfaction"]
-    assert training_block.section_path == ["4. Workforce Readiness and Training"]
-
-
-def test_pdf_parser_detects_abstract_table_equation_algorithm_and_figure(monkeypatch):
-    class FakeReader:
-        def __init__(self, *_args, **_kwargs):
-            self.metadata = SimpleNamespace(title="Technical Paper")
-            self.pages = [
-                SimpleNamespace(
-                    extract_text=lambda: "\n".join(
-                        [
-                            "BDPP-IoT",
-                            "Danish Ali",
-                            "Pakistan",
-                            "Abstract—This paper proposes a privacy-preserving framework.",
-                            "I. INTRODUCTION",
-                            "TABLE I Comparison of Models",
-                            "Metric Value Accuracy 98.4",
-                            "F = m * a (12)",
-                            "where F represents applied force.",
-                            "Algorithm 2 Secure Access Validation",
-                            "Step 1 Validate token",
-                            "Fig. 2 Architecture Overview",
-                        ]
-                    )
-                )
-            ]
-
-    monkeypatch.setattr(pdf_module, "PdfReader", FakeReader)
-
-    parser = PdfParser()
     result = parser.parse(b"fake-pdf", {"filename": "paper.pdf"})
 
-    heading_texts = [block.text for block in result.blocks if block.block_type == "heading"]
-    assert "Danish Ali" not in heading_texts
-    assert "Pakistan" not in heading_texts
-    assert "Abstract" in heading_texts
-    assert "I. INTRODUCTION" in heading_texts
+    assert result.detected_source_type == "pdf"
+    assert result.metadata["page_count"] == 2
+    assert result.metadata["parser_backend"] == "docling"
+    assert result.title == "Technical Paper"
+    assert result.warnings == ["parser-note"]
 
-    block_types = [block.block_type for block in result.blocks]
-    assert "table_caption" in block_types
-    assert "table_row" in block_types
-    assert "equation" in block_types
-    assert "equation_explanation" in block_types
-    assert "algorithm" in block_types
-    assert "figure_caption" in block_types
+    headings = [block.text for block in result.blocks if block.block_type == "heading"]
+    assert headings == ["Abstract", "I. INTRODUCTION"]
 
-    table_caption = next(block for block in result.blocks if block.block_type == "table_caption")
-    table_row = next(block for block in result.blocks if block.block_type == "table_row")
-    equation = next(block for block in result.blocks if block.block_type == "equation")
-    figure = next(block for block in result.blocks if block.block_type == "figure_caption")
+    intro_block = next(block for block in result.blocks if "IoT systems face" in block.text)
+    assert intro_block.section_path == ["I. INTRODUCTION"]
+    assert all(block.text != "Technical Paper" for block in result.blocks if block.block_type == "heading")
 
-    assert table_caption.metadata["content_kind"] == "table_caption"
-    assert table_row.metadata["table_id"] == table_caption.metadata["table_id"]
+
+def test_pdf_parser_preserves_nested_section_paths_from_docling_items():
+    items = [
+        DoclingNormalizedItem(kind="heading", text="I. INTRODUCTION", page_number=1, heading_level=1),
+        DoclingNormalizedItem(kind="heading", text="A. Device Layer", page_number=1, heading_level=2),
+        DoclingNormalizedItem(kind="paragraph", text="Sensors collect raw telemetry.", page_number=1),
+    ]
+    parser = PdfParser(adapter=_FakeAdapter(DoclingParseResult(title=None, page_count=1, items=items)))
+
+    result = parser.parse(b"fake-pdf", {"filename": "device-layer.pdf"})
+
+    block = next(block for block in result.blocks if block.block_type == "paragraph")
+    assert block.section_path == ["I. INTRODUCTION", "A. Device Layer"]
+    assert result.title == "I. INTRODUCTION"
+
+
+def test_pdf_parser_keeps_front_matter_outside_active_heading_sections():
+    items = [
+        DoclingNormalizedItem(kind="heading", text="Abstract", page_number=1, heading_level=1),
+        DoclingNormalizedItem(
+            kind="paragraph",
+            text="Danish Ali Department of Artificial Intelligence",
+            page_number=1,
+            metadata={"content_kind": "front_matter", "exclude_from_chunking": True, "exclude_from_retrieval": True},
+        ),
+        DoclingNormalizedItem(kind="paragraph", text="This paper proposes a secure framework.", page_number=1),
+    ]
+    parser = PdfParser(adapter=_FakeAdapter(DoclingParseResult(title="Technical Paper", page_count=1, items=items)))
+
+    result = parser.parse(b"fake-pdf", {"filename": "paper.pdf"})
+
+    front_matter = next(block for block in result.blocks if "Danish Ali" in block.text)
+    abstract_body = next(block for block in result.blocks if "secure framework" in block.text)
+
+    assert front_matter.section_path == []
+    assert front_matter.parent_block_id is None
+    assert abstract_body.section_path == ["Abstract"]
+
+
+def test_docling_adapter_normalizes_front_matter_tables_equations_algorithms_and_figures():
+    adapter = _DoclingAdapter()
+    fake_document = _FakeDocument(
+        title=None,
+        pages=[1],
+        items=[
+            _FakeItem(label="title", text="BDPP-IoT"),
+            _FakeItem(label="author", text="Danish Ali", prov=[{"page_no": 1}]),
+            _FakeItem(
+                label="paragraph",
+                text="Abstract - This paper proposes a privacy-preserving framework.",
+                prov=[{"page_no": 1}],
+            ),
+            _FakeItem(label="paragraph", text="Index Terms - IoT, Blockchain", prov=[{"page_no": 1}]),
+            _FakeItem(label="heading", text="I. INTRODUCTION", prov=[{"page_no": 1}]),
+            _FakeItem(
+                label="table",
+                caption="TABLE I Comparison of Models",
+                data=[
+                    ["Metric", "Value"],
+                    ["Accuracy", "98.4"],
+                    ["MAE", "11.2"],
+                ],
+                prov=[{"page_no": 1}],
+            ),
+            _FakeItem(label="equation", text="F = m * a (12)", prov=[{"page_no": 1}]),
+            _FakeItem(label="paragraph", text="where F represents applied force.", prov=[{"page_no": 1}]),
+            _FakeItem(label="algorithm", text="Algorithm 2 Secure Access Validation", prov=[{"page_no": 1}]),
+            _FakeItem(label="paragraph", text="Step 1 Validate token", prov=[{"page_no": 1}]),
+            _FakeItem(label="figure", caption="Fig. 2 Architecture Overview", prov=[{"page_no": 1}]),
+            _FakeItem(label="reference", text="[17] Blockchain access control", prov=[{"page_no": 1}]),
+        ],
+    )
+
+    result = adapter._normalize_document(fake_document)
+
+    assert result.title == "BDPP-IoT"
+    assert result.page_count == 1
+
+    heading_items = [item.text for item in result.items if item.kind == "heading"]
+    assert "Abstract" in heading_items
+    assert "I. INTRODUCTION" in heading_items
+    assert "Danish Ali" not in heading_items
+
+    front_matter = next(item for item in result.items if item.text == "Danish Ali")
+    assert front_matter.kind == "paragraph"
+    assert front_matter.metadata["content_kind"] == "front_matter"
+    assert front_matter.metadata["exclude_from_chunking"] is True
+    assert front_matter.metadata["exclude_from_retrieval"] is True
+
+    index_terms = next(item for item in result.items if item.text.startswith("Index Terms"))
+    assert index_terms.metadata["content_kind"] == "front_matter"
+
+    table_caption = next(item for item in result.items if item.kind == "table_caption")
+    table_rows = [item for item in result.items if item.kind == "table_row"]
+    equation = next(item for item in result.items if item.kind == "equation")
+    equation_explanation = next(item for item in result.items if item.kind == "equation_explanation")
+    algorithm_items = [item for item in result.items if item.kind == "algorithm"]
+    figure = next(item for item in result.items if item.kind == "figure_caption")
+    reference = next(item for item in result.items if item.text.startswith("[17]"))
+
+    assert table_caption.metadata["caption_label"].lower().startswith("table")
+    assert table_caption.metadata["table_parse_status"] == "row_backed"
+    assert len(table_rows) == 2
+    assert all(row.metadata["table_id"] == table_caption.metadata["table_id"] for row in table_rows)
+    assert "Metric: Accuracy" in table_rows[0].text
     assert equation.metadata["equation_label"] == "12"
+    assert equation_explanation.metadata["equation_id"] == equation.metadata["equation_id"]
+    assert len(algorithm_items) == 2
+    assert algorithm_items[1].metadata["algorithm_id"] == algorithm_items[0].metadata["algorithm_id"]
     assert figure.metadata["caption_label"].lower().startswith("fig.")
+    assert reference.kind == "paragraph"
+
+
+def test_docling_adapter_warns_when_table_has_caption_without_rows():
+    adapter = _DoclingAdapter()
+    fake_document = _FakeDocument(
+        pages=[1],
+        items=[
+            _FakeItem(label="table", caption="TABLE II Sparse Table", data=[], prov=[{"page_no": 1}]),
+        ],
+    )
+
+    result = adapter._normalize_document(fake_document)
+
+    assert any("had no recoverable table rows" in warning for warning in result.warnings)
+    caption = next(item for item in result.items if item.kind == "table_caption")
+    assert caption.metadata["table_parse_status"] == "caption_only"
+    assert all(item.kind != "table_row" for item in result.items)
+
+
+def test_docling_adapter_reconciles_row_only_tables_to_nearest_caption_group():
+    adapter = _DoclingAdapter()
+    fake_document = _FakeDocument(
+        title="BDPP-IoT",
+        pages=[1],
+        items=[
+            _FakeItem(label="title", text="BDPP-IoT"),
+            _FakeItem(label="heading", text="I. INTRODUCTION", prov=[{"page_no": 1}]),
+            _FakeItem(label="table", caption="TABLE I Comparison of Models", data=[], prov=[{"page_no": 1}]),
+            _FakeItem(
+                label="table",
+                data=[
+                    ["Metric", "Value"],
+                    ["Accuracy", "98.4"],
+                    ["MAE", "11.2"],
+                ],
+                prov=[{"page_no": 1}],
+            ),
+        ],
+    )
+
+    result = adapter._normalize_document(fake_document)
+
+    table_caption = next(item for item in result.items if item.kind == "table_caption")
+    table_rows = [item for item in result.items if item.kind == "table_row"]
+
+    assert table_caption.metadata["table_parse_status"] == "row_backed"
+    assert len(table_rows) == 2
+    assert all(row.metadata["table_id"] == table_caption.metadata["table_id"] for row in table_rows)
+    assert all(row.metadata["caption_label"] == table_caption.metadata["caption_label"] for row in table_rows)
+
+
+def test_docling_adapter_keeps_lettered_subsections_nested_once_body_has_started():
+    adapter = _DoclingAdapter()
+    fake_document = _FakeDocument(
+        title="BDPP-IoT",
+        pages=[1],
+        items=[
+            _FakeItem(label="title", text="BDPP-IoT"),
+            _FakeItem(label="heading", text="I. INTRODUCTION", prov=[{"page_no": 1}]),
+            _FakeItem(label="heading", text="A. Device Layer", prov=[{"page_no": 1}]),
+            _FakeItem(label="paragraph", text="Sensors collect telemetry.", prov=[{"page_no": 1}]),
+            _FakeItem(label="heading", text="REFERENCES", prov=[{"page_no": 2}]),
+            _FakeItem(label="paragraph", text="[17] Blockchain access control", prov=[{"page_no": 2}]),
+        ],
+    )
+
+    parser = PdfParser(adapter=_FakeAdapter(adapter._normalize_document(fake_document)))
+    result = parser.parse(b"fake-pdf", {"filename": "paper.pdf"})
+
+    device_layer = next(block for block in result.blocks if block.block_type == "heading" and block.text == "A. Device Layer")
+    reference_entry = next(block for block in result.blocks if block.text.startswith("[17]"))
+
+    assert device_layer.section_path == ["I. INTRODUCTION", "A. Device Layer"]
+    assert reference_entry.block_type == "paragraph"
+
+
+def test_docling_adapter_promotes_decimal_subsections_after_body_start():
+    adapter = _DoclingAdapter()
+    fake_document = _FakeDocument(
+        title="RAG Test Document",
+        pages=[1],
+        items=[
+            _FakeItem(label="title", text="RAG Test Document"),
+            _FakeItem(label="heading", text="1. Introduction to Supervised Learning", prov=[{"page_no": 1}]),
+            _FakeItem(label="paragraph", text="1.1 The Empirical Risk Minimisation Framework", prov=[{"page_no": 1}]),
+            _FakeItem(label="paragraph", text="1.1.1 Empirical Risk Bounds", prov=[{"page_no": 1}]),
+        ],
+    )
+
+    result = adapter._normalize_document(fake_document)
+    promoted = [item for item in result.items if item.kind == "heading" and item.text.startswith("1.1")]
+
+    assert [item.heading_level for item in promoted] == [2, 3]
+    assert all(item.metadata["normalization_promoted_decimal_subsection"] is True for item in promoted)
+
+
+def test_docling_adapter_suppresses_repeated_page_banner_lines():
+    adapter = _DoclingAdapter()
+    fake_document = _FakeDocument(
+        title="RAG Test Document: Foundations of Machine Learning",
+        pages=[1, 2],
+        items=[
+            _FakeItem(label="title", text="RAG Test Document: Foundations of Machine Learning"),
+            _FakeItem(label="heading", text="1. Introduction to Supervised Learning", prov=[{"page_no": 1}]),
+            _FakeItem(label="paragraph", text="Foundations of Machine Learning", prov=[{"page_no": 1}]),
+            _FakeItem(label="paragraph", text="A Technical Reference for RAG Pipeline Evaluation", prov=[{"page_no": 1}]),
+            _FakeItem(label="paragraph", text="Research Division · Version 2.4 · May 2026", prov=[{"page_no": 1}]),
+            _FakeItem(label="paragraph", text="Supervised learning uses labeled examples.", prov=[{"page_no": 1}]),
+        ],
+    )
+
+    result = adapter._normalize_document(fake_document)
+
+    assert all("Technical Reference" not in item.text for item in result.items)
+    assert all("Research Division" not in item.text for item in result.items)
+    assert result.stats["page_artifact_suppressed_count"] == 3
+
+
+def test_docling_adapter_merges_adjacent_equation_fragments():
+    adapter = _DoclingAdapter()
+    fake_document = _FakeDocument(
+        title="Math Notes",
+        pages=[1],
+        items=[
+            _FakeItem(label="heading", text="1. Intro", prov=[{"page_no": 1}]),
+            _FakeItem(label="equation", text="cos(q) = (u · v) / (||u|| ||v||", prov=[{"page_no": 1}]),
+            _FakeItem(label="equation", text=") = Σ u_i v_i / (Σ u_i^2 · Σ v_i^2)", prov=[{"page_no": 1}]),
+        ],
+    )
+
+    result = adapter._normalize_document(fake_document)
+    equations = [item for item in result.items if item.kind == "equation"]
+
+    assert len(equations) == 1
+    assert "Σ u_i v_i" in equations[0].text
+    assert equations[0].metadata["merged_equation_fragments"] == 1
+    assert result.stats["merged_equation_fragment_count"] == 1
+
+
+def test_docling_adapter_keeps_weak_inline_math_as_paragraph():
+    adapter = _DoclingAdapter()
+    fake_document = _FakeDocument(
+        title="Notes",
+        pages=[1],
+        items=[
+            _FakeItem(label="heading", text="1. Intro", prov=[{"page_no": 1}]),
+            _FakeItem(
+                label="paragraph",
+                text="The loss term L(y_hat, y) is optimized during training.",
+                prov=[{"page_no": 1}],
+            ),
+        ],
+    )
+
+    result = adapter._normalize_document(fake_document)
+
+    assert all(item.kind != "equation" for item in result.items)
+
+
+def test_docling_adapter_reuses_headers_for_multi_page_table_continuations():
+    adapter = _DoclingAdapter()
+    fake_document = _FakeDocument(
+        title="Benchmarks",
+        pages=[1, 2],
+        items=[
+            _FakeItem(
+                label="table",
+                caption="Table 1 - Common Supervised Learning Benchmark Datasets",
+                data=[
+                    ["Dataset", "Domain", "Samples"],
+                    ["MNIST", "Vision", "70,000"],
+                ],
+                prov=[{"page_no": 1}],
+            ),
+            _FakeItem(
+                label="table",
+                data=[
+                    ["Boston Housing", "Tabular", "506"],
+                ],
+                prov=[{"page_no": 2}],
+            ),
+        ],
+    )
+
+    result = adapter._normalize_document(fake_document)
+    continuation_row = next(item for item in result.items if "Boston Housing" in item.text)
+
+    assert continuation_row.text.startswith("Dataset: Boston Housing")
+    assert continuation_row.metadata["reused_table_headers"] is True
+    assert result.stats["multi_page_table_header_reuse_count"] == 1
+
+
+class _FakeAdapter:
+    def __init__(self, result: DoclingParseResult) -> None:
+        self._result = result
+
+    def convert_pdf(self, _raw_bytes: bytes) -> DoclingParseResult:
+        return self._result
+
+
+class _FakeDocument:
+    def __init__(self, items, title=None, pages=None):
+        self._items = items
+        self.title = title
+        self.pages = pages or []
+
+    def iterate_items(self):
+        return iter(self._items)
+
+
+class _FakeItem(SimpleNamespace):
+    pass
 
 
 def _build_minimal_docx(text: str) -> bytes:
