@@ -115,6 +115,7 @@ class OpenAITranscriptionProvider(SpeechToTextProvider):
             input_duration_ms=duration_ms,
             estimated_cost_usd=0.0,
             confidence=None,
+            language=str(data.get("language")) if data.get("language") else None,
             segments=segments,
         )
 

@@ -94,6 +94,7 @@ class TranscriptionResult:
     input_duration_ms: int | None = None
     estimated_cost_usd: float = 0.0
     confidence: float | None = None
+    language: str | None = None
     segments: list[dict[str, Any]] = field(default_factory=list)
     attempts: list[ProviderAttempt] = field(default_factory=list)
     fallback_used: bool = False

@@ -12,11 +12,13 @@ from app.llm.providers.openai import (
     OpenAITranscriptionProvider,
 )
 from app.llm.router import ModelRouter
+from app.retrieval.audio_retriever import AudioRetrievalService
 from app.retrieval.reranker import CrossEncoderReranker, NoopReranker
 from app.retrieval.retriever import RetrievalService
 from app.security.auth import AuthService
 from app.security.policy import SecurityPolicyService
 from app.security.rate_limit import RateLimiter
+from app.services.audio_ingestion_service import AudioIngestionService
 from app.services.auth_service import SupabaseAuthBrokerService
 from app.services.chat_service import ChatService
 from app.services.conversation_service import ConversationService
@@ -29,6 +31,7 @@ from app.services.voice_chat_service import VoiceChatService
 from app.services.voice_media_service import VoiceMediaService
 from app.storage.db.session import Database
 from app.storage.object_store import StorageClient
+from app.storage.repositories.audio import AudioRepository
 from app.storage.repositories.audit import AuditRepository
 from app.storage.repositories.conversation import ConversationRepository
 from app.storage.repositories.document import DocumentRepository
@@ -50,11 +53,11 @@ class AppContainer:
         self.retrieval_repository = RetrievalRepository(self.db, settings)
         self.conversation_repository = ConversationRepository(self.db, settings)
         self.voice_repository = VoiceRepository(self.db, settings)
+        self.audio_repository = AudioRepository(self.db, settings)
         self.feedback_repository = FeedbackRepository(self.db, settings)
         self.audit_repository = AuditRepository(self.db, settings)
         self.storage = StorageClient(settings)
         self.voice_media_service = VoiceMediaService(storage=self.storage, settings=settings)
-        self.parser_registry = ParserRegistry()
         self.task_runner = IngestionTaskRunner(settings)
         self.auth_service = AuthService(settings)
         self.supabase_auth_service = SupabaseAuthBrokerService(settings)
@@ -81,11 +84,17 @@ class AppContainer:
             tts_providers=self.tts_providers,
             telemetry=self.telemetry,
         )
+        self.parser_registry = ParserRegistry(model_router=self.model_router)
         self.reranker = CrossEncoderReranker(settings) if settings.reranker_enabled else NoopReranker()
         self.retrieval_service = RetrievalService(
             retrieval_repository=self.retrieval_repository,
             model_router=self.model_router,
             reranker=self.reranker,
+            settings=settings,
+        )
+        self.audio_retrieval_service = AudioRetrievalService(
+            retrieval_repository=self.retrieval_repository,
+            model_router=self.model_router,
             settings=settings,
         )
         self.personal_workspace_service = PersonalWorkspaceService(self.workspace_repository)
@@ -97,6 +106,15 @@ class AppContainer:
             parser_registry=self.parser_registry,
             task_runner=self.task_runner,
             telemetry=self.telemetry,
+            settings=settings,
+            audio_repository=self.audio_repository,
+        )
+        self.audio_ingestion_service = AudioIngestionService(
+            document_repository=self.document_repository,
+            audio_repository=self.audio_repository,
+            ingestion_repository=self.ingestion_repository,
+            ingestion_service=self.ingestion_service,
+            storage=self.storage,
             settings=settings,
         )
         self.document_service = DocumentService(
