@@ -175,8 +175,7 @@ class _DoclingAdapter:
         processed, suppressed_count = self._suppress_page_artifacts(processed, title=title)
         stats["page_artifact_suppressed_count"] += suppressed_count
         processed = self._normalize_front_matter(processed)
-        processed, promoted_count = self._promote_subsection_headings(processed)
-        stats["decimal_subsection_heading_count"] += promoted_count
+        processed, _promoted_count = self._promote_subsection_headings(processed)
         processed, table_warnings = self._reconcile_table_groups(processed)
         warnings.extend(table_warnings)
         processed, header_reuse_count = self._normalize_table_continuations(processed)
@@ -184,6 +183,7 @@ class _DoclingAdapter:
         processed, merged_equation_count, orphan_count = self._reconcile_equations(processed)
         stats["merged_equation_fragment_count"] += merged_equation_count
         stats["equation_fragment_orphan_count"] += orphan_count
+        stats["decimal_subsection_heading_count"] = _count_promoted_decimal_subsections(processed)
         return processed, warnings, stats
 
     def _suppress_title_heading(
@@ -491,24 +491,23 @@ class _DoclingAdapter:
 
             metadata = dict(item.metadata)
             table_id = str(metadata.get("table_id") or "")
-            headers = [header for header in metadata.get("table_headers") or [] if _normalize_whitespace(header)]
-            if headers:
-                known_headers[table_id] = headers
-            else:
-                headers = known_headers.get(table_id, [])
+            item_headers = _usable_table_headers(metadata.get("table_headers") or [])
+            if item_headers:
+                known_headers[table_id] = item_headers
+            headers = item_headers or known_headers.get(table_id, [])
 
             text = item.text
             if headers and _row_uses_positional_fields(text):
                 values = _parse_positional_row_values(text)
                 if len(values) == len(headers):
-                    text = _format_table_row(headers, values)
+                    text = _format_table_pairs(headers, values)
                     metadata["table_headers"] = headers
                     metadata["reused_table_headers"] = True
                     reused_count += 1
             elif headers and not metadata.get("table_headers"):
                 raw_values = [part.strip() for part in text.split("|") if _normalize_whitespace(part)]
                 if len(raw_values) == len(headers):
-                    text = _format_table_row(headers, raw_values)
+                    text = _format_table_pairs(headers, raw_values)
                     metadata["table_headers"] = headers
                     metadata["reused_table_headers"] = True
                     reused_count += 1
@@ -571,6 +570,17 @@ class _DoclingAdapter:
                 next_index += 1
 
             if _is_orphan_equation_fragment(equation.text):
+                attached = False
+                if _looks_like_closing_equation_tail(equation.text):
+                    attached = self._attach_orphan_equation_fragment(
+                        reconciled=reconciled,
+                        orphan=equation,
+                        orphan_context=contexts[index],
+                    )
+                if attached:
+                    merged_count += 1
+                    index = next_index
+                    continue
                 orphan_count += 1
                 equation = DoclingNormalizedItem(
                     kind="equation",
@@ -586,6 +596,45 @@ class _DoclingAdapter:
 
         return reconciled, merged_count, orphan_count
 
+    def _attach_orphan_equation_fragment(
+        self,
+        *,
+        reconciled: list[DoclingNormalizedItem],
+        orphan: DoclingNormalizedItem,
+        orphan_context: tuple[str, ...],
+    ) -> bool:
+        for offset, previous in enumerate(reversed(reconciled), start=1):
+            if offset > 6:
+                break
+            if previous.kind in {"heading", "table_caption", "table_row", "figure_caption", "algorithm"}:
+                break
+            if previous.kind == "paragraph":
+                if _looks_like_equation_fragment(previous.text):
+                    continue
+                break
+            if previous.kind != "equation":
+                break
+            previous_context = tuple(previous.metadata.get("section_context") or ())
+            if previous_context and not _same_top_level_context(previous_context, orphan_context):
+                return False
+            if not _same_or_continuation_page(previous.page_number, orphan.page_number):
+                return False
+            if not _can_absorb_orphan_equation_fragment(previous.text, orphan.text):
+                return False
+            merged_metadata = {
+                **previous.metadata,
+                "merged_equation_fragments": previous.metadata.get("merged_equation_fragments", 0) + 1,
+            }
+            reconciled[-offset] = DoclingNormalizedItem(
+                kind="equation",
+                text=_merge_equation_text(previous.text, orphan.text),
+                page_number=previous.page_number,
+                heading_level=previous.heading_level,
+                metadata=merged_metadata,
+            )
+            return True
+        return False
+
     def _section_contexts(self, items: list[DoclingNormalizedItem]) -> list[tuple[str, ...]]:
         contexts: list[tuple[str, ...]] = []
         heading_stack: list[tuple[int, str]] = []
@@ -595,9 +644,13 @@ class _DoclingAdapter:
                 while heading_stack and heading_stack[-1][0] >= level:
                     heading_stack.pop()
                 heading_stack.append((level, item.text))
-                contexts.append(tuple(text for _, text in heading_stack))
+                context = tuple(text for _, text in heading_stack)
+                contexts.append(context)
+                item.metadata.setdefault("section_context", context)
             else:
-                contexts.append(tuple(text for _, text in heading_stack))
+                context = tuple(text for _, text in heading_stack)
+                contexts.append(context)
+                item.metadata.setdefault("section_context", context)
         return contexts
 
     def _find_best_caption_for_row(
@@ -1298,14 +1351,27 @@ def _format_table_row(headers: list[str], row: list[str]) -> str:
     if not cleaned_row:
         return ""
     if headers and len(headers) == len(row):
-        pairs = [f"{header}: {value}" for header, value in zip(headers, row) if _normalize_whitespace(value)]
-        return " | ".join(pairs)
+        return _format_table_pairs(headers, row)
     if headers and len(headers) > 1 and len(row) == len(headers) - 1:
         pairs = [f"{header}: {value}" for header, value in zip(headers[1:], row) if _normalize_whitespace(value)]
         if row[0]:
             pairs.insert(0, f"{headers[0]}: {row[0]}")
         return " | ".join(pairs)
     return " | ".join(cleaned_row)
+
+
+def _format_table_pairs(headers: list[str], row: list[str]) -> str:
+    pairs = [f"{header}: {value}" for header, value in zip(headers, row) if _normalize_whitespace(value)]
+    return " | ".join(pairs)
+
+
+def _usable_table_headers(headers: list[str]) -> list[str]:
+    cleaned = [_normalize_whitespace(header) for header in headers if _normalize_whitespace(header)]
+    if not cleaned:
+        return []
+    if all(re.fullmatch(r"\d+", header) for header in cleaned):
+        return []
+    return cleaned
 
 
 def _as_front_matter_item(item: DoclingNormalizedItem) -> DoclingNormalizedItem:
@@ -1546,6 +1612,12 @@ def _same_section_context(left: tuple[str, ...], right: tuple[str, ...]) -> bool
     return left == right
 
 
+def _same_top_level_context(left: tuple[str, ...], right: tuple[str, ...]) -> bool:
+    if not left or not right:
+        return True
+    return left[0] == right[0]
+
+
 def _same_or_continuation_page(left: int | None, right: int | None) -> bool:
     if left is None or right is None:
         return True
@@ -1558,8 +1630,8 @@ def _should_merge_equation_fragment(current_text: str, candidate_text: str, cand
     if not candidate:
         return False
     if candidate_kind == "paragraph":
-        return _looks_like_equation_fragment(candidate)
-    return _looks_like_equation_fragment(candidate) or _equation_appears_incomplete(current)
+        return _equation_appears_incomplete(current) and _looks_like_equation_fragment(candidate)
+    return _equation_appears_incomplete(current) and _looks_like_equation_fragment(candidate)
 
 
 def _equation_appears_incomplete(text: str) -> bool:
@@ -1568,7 +1640,15 @@ def _equation_appears_incomplete(text: str) -> bool:
         return False
     if normalized.endswith(("=", "+", "-", "*", "/", "(", "[", "{")):
         return True
-    return normalized.count("(") > normalized.count(")") or normalized.count("[") > normalized.count("]")
+    if normalized.count("(") > normalized.count(")") or normalized.count("[") > normalized.count("]"):
+        return True
+    if re.search(r"(?:\b\w+\s*)\^\s*$", normalized):
+        return True
+    if re.search(r"/\s*$", normalized):
+        return True
+    if re.search(r"\b(?:sin|cos|tan|log|exp|max|min)\s*\([^)]*$", normalized, re.IGNORECASE):
+        return True
+    return False
 
 
 def _looks_like_equation_fragment(text: str) -> bool:
@@ -1581,6 +1661,8 @@ def _looks_like_equation_fragment(text: str) -> bool:
     alpha_count = sum(1 for char in normalized if char.isalpha())
     if len(normalized) <= 12 and symbol_count >= 1:
         return True
+    if _looks_like_closing_equation_tail(normalized):
+        return True
     return symbol_count >= 2 and alpha_count <= max(6, len(normalized) // 3)
 
 
@@ -1592,4 +1674,31 @@ def _is_orphan_equation_fragment(text: str) -> bool:
 
 
 def _merge_equation_text(left: str, right: str) -> str:
-    return _normalize_whitespace(f"{left} {right}")
+    merged = f"{_normalize_whitespace(left)} {_normalize_whitespace(right)}"
+    merged = re.sub(r"\s+([)\]\}])", r"\1", merged)
+    merged = re.sub(r"([(\[\{])\s+", r"\1", merged)
+    return _normalize_whitespace(merged)
+
+
+def _looks_like_closing_equation_tail(text: str) -> bool:
+    normalized = _normalize_whitespace(text)
+    if not normalized:
+        return False
+    return bool(
+        re.match(r"^[)\]}\s]+(?:\d+|[a-z]\b|[+\-*/^=].*)?$", normalized, re.IGNORECASE)
+        or re.match(r"^\^\s*\d+$", normalized)
+    )
+
+
+def _can_absorb_orphan_equation_fragment(previous_text: str, orphan_text: str) -> bool:
+    if not _looks_like_closing_equation_tail(orphan_text):
+        return False
+    return _equation_appears_incomplete(previous_text)
+
+
+def _count_promoted_decimal_subsections(items: list[DoclingNormalizedItem]) -> int:
+    return sum(
+        1
+        for item in items
+        if item.kind == "heading" and item.metadata.get("normalization_promoted_decimal_subsection") is True
+    )

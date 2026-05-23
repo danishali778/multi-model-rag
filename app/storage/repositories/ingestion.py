@@ -122,7 +122,9 @@ class IngestionRepository:
             raise ValueError("Chunk and embedding counts must match.")
         async with self.db.connection() as conn:
             async with conn.cursor() as cur:
+                await cur.execute("delete from document_structure_edges where document_id = %s", (payload.document_id,))
                 await cur.execute("delete from document_chunks where document_id = %s", (payload.document_id,))
+                await cur.execute("delete from document_structure_nodes where document_id = %s", (payload.document_id,))
                 await cur.execute("delete from document_blocks where document_id = %s", (payload.document_id,))
                 for block in payload.blocks:
                     await cur.execute(
@@ -147,21 +149,76 @@ class IngestionRepository:
                             json.dumps(block.metadata),
                         ),
                     )
+                for node in payload.nodes:
+                    await cur.execute(
+                        """
+                        insert into document_structure_nodes (
+                            id, workspace_id, document_id, node_type, node_key, title,
+                            section_path, level, page_start, page_end, block_order_start,
+                            block_order_end, parent_node_id, metadata
+                        )
+                        values (
+                            %s, %s, %s, %s, %s, %s,
+                            %s::jsonb, %s, %s, %s, %s,
+                            %s, %s, %s::jsonb
+                        )
+                        """,
+                        (
+                            node.id,
+                            payload.workspace_id,
+                            payload.document_id,
+                            node.node_type,
+                            node.node_key,
+                            node.title,
+                            json.dumps(node.section_path),
+                            node.level,
+                            node.page_start,
+                            node.page_end,
+                            node.block_order_start,
+                            node.block_order_end,
+                            node.parent_node_id,
+                            json.dumps(node.metadata),
+                        ),
+                    )
+                for edge in payload.edges:
+                    await cur.execute(
+                        """
+                        insert into document_structure_edges (
+                            id, workspace_id, document_id, from_node_id, to_node_id,
+                            edge_type, edge_order, metadata
+                        )
+                        values (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                        """,
+                        (
+                            edge.id,
+                            payload.workspace_id,
+                            payload.document_id,
+                            edge.from_node_id,
+                            edge.to_node_id,
+                            edge.edge_type,
+                            edge.edge_order,
+                            json.dumps(edge.metadata),
+                        ),
+                    )
                 for chunk, embedding in zip(payload.chunks, payload.embeddings, strict=True):
                     await cur.execute(
                         """
                         insert into document_chunks (
-                            workspace_id, document_id, chunk_index, content, content_hash,
+                            id, workspace_id, document_id, chunk_index, content, content_hash,
                             token_count, metadata, embedding, embedding_model, chunking_version,
                             parent_block_id, chunk_role, page_number, chunk_type, section_title,
-                            subsection_title, section_path, block_order_start, block_order_end
+                            subsection_title, section_path, block_order_start, block_order_end,
+                            node_id, parent_node_id, previous_chunk_id, next_chunk_id, level,
+                            page_start, page_end, embedding_text
                         )
                         values (
-                            %s, %s, %s, %s, md5(%s), %s, %s::jsonb, %s::extensions.vector, %s, %s,
-                            %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s
+                            %s, %s, %s, %s, %s, md5(%s), %s, %s::jsonb, %s::extensions.vector, %s, %s,
+                            %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s,
+                            %s, %s, %s, %s, %s, %s, %s, %s
                         )
                         """,
                         (
+                            chunk.id,
                             payload.workspace_id,
                             payload.document_id,
                             chunk.chunk_index,
@@ -181,6 +238,28 @@ class IngestionRepository:
                             json.dumps(chunk.section_path or []),
                             chunk.block_order_start,
                             chunk.block_order_end,
+                            chunk.node_id,
+                            chunk.parent_node_id,
+                            None,
+                            None,
+                            chunk.level,
+                            chunk.page_start,
+                            chunk.page_end,
+                            chunk.embedding_text,
+                        ),
+                    )
+                for chunk in payload.chunks:
+                    await cur.execute(
+                        """
+                        update document_chunks
+                        set previous_chunk_id = %s,
+                            next_chunk_id = %s
+                        where id = %s
+                        """,
+                        (
+                            chunk.previous_chunk_id,
+                            chunk.next_chunk_id,
+                            chunk.id,
                         ),
                     )
                 await conn.commit()

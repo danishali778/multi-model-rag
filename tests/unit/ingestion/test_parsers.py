@@ -1,7 +1,9 @@
 from io import BytesIO
 from types import SimpleNamespace
 from zipfile import ZipFile
+import asyncio
 
+from app.ingestion.audio.parser import AudioParser
 from app.ingestion.parsers.docx import DocxParser
 from app.ingestion.parsers.html import HtmlParser
 from app.ingestion.parsers.markdown import MarkdownParser
@@ -11,35 +13,132 @@ from app.ingestion.parsers.pdf import (
     PdfParser,
     _DoclingAdapter,
 )
+from app.llm.providers.base import TranscriptionResult
 
 
 def test_markdown_parser_extracts_text_and_title():
     parser = MarkdownParser()
-    result = parser.parse(b"# Handbook\n\nRemote work is allowed.", {"filename": "handbook.md"})
+    result = parser.parse(
+        b"# Handbook\n\n## Eligibility\n\nTable 1 - Regional Attendance\n\n| Team | Days |\n| --- | --- |\n| Support | 3 |\n\n- Request approval\n\n```yaml\nmode: hybrid\n```",
+        {"filename": "handbook.md"},
+    )
 
     assert result.title == "Handbook"
-    assert "Remote work is allowed." in result.text
+    subsection = next(block for block in result.blocks if block.block_type == "heading" and block.text == "Eligibility")
+    table_caption = next(block for block in result.blocks if block.block_type == "table_caption")
+    table_row = next(block for block in result.blocks if block.block_type == "table_row")
+    list_item = next(block for block in result.blocks if block.block_type == "list_item")
+    code_block = next(block for block in result.blocks if block.metadata.get("content_kind") == "code_block")
+
+    assert subsection.section_path == ["Handbook", "Eligibility"]
+    assert table_caption.metadata["table_parse_status"] == "row_backed"
+    assert table_row.metadata["table_id"] == table_caption.metadata["table_id"]
+    assert "Team: Support" in table_row.text
+    assert list_item.metadata["list_depth"] == 0
+    assert code_block.metadata["code_language"] == "yaml"
 
 
 def test_html_parser_extracts_title_and_text():
     parser = HtmlParser()
     result = parser.parse(
-        b"<html><head><title>Policies</title></head><body><h1>Remote Work</h1><p>Allowed.</p></body></html>",
+        (
+            b"<html><head><title>Policies</title></head><body><h1>Remote Work</h1><h2>Eligibility</h2>"
+            b"<p>Allowed.</p><p>Table 2 - Coverage</p><table><tr><th>Team</th><th>Days</th></tr><tr><td>Field</td><td>2</td></tr></table>"
+            b"<figure><img src='chart.png'/><figcaption>Figure 1 Architecture Overview</figcaption></figure></body></html>"
+        ),
         {"filename": "policies.html"},
     )
 
     assert result.title == "Policies"
-    assert "Remote Work" in result.text
-    assert "Allowed." in result.text
+    eligibility = next(block for block in result.blocks if block.block_type == "heading" and block.text == "Eligibility")
+    table_caption = next(block for block in result.blocks if block.block_type == "table_caption")
+    table_row = next(block for block in result.blocks if block.block_type == "table_row")
+    figure = next(block for block in result.blocks if block.block_type == "figure_caption")
+
+    assert eligibility.section_path == ["Remote Work", "Eligibility"]
+    assert "Team: Field" in table_row.text
+    assert table_row.metadata["table_id"] == table_caption.metadata["table_id"]
+    assert figure.metadata["caption_label"].lower().startswith("figure")
 
 
 def test_docx_parser_extracts_paragraphs():
-    parser = DocxParser()
+    parser = DocxParser(
+        html_converter=lambda _raw_bytes: (
+            "<html><body><h1>Operations Manual</h1><h2>Runbook</h2><p>Restart the worker gracefully.</p>"
+            "<p>Table 3 - Ownership</p><table><tr><th>Team</th><th>Owner</th></tr><tr><td>Platform</td><td>SRE</td></tr></table></body></html>"
+        )
+    )
     raw_bytes = _build_minimal_docx("Remote work is allowed.")
     result = parser.parse(raw_bytes, {"filename": "policy.docx"})
 
-    assert result.title.startswith("Remote work")
-    assert "Remote work is allowed." in result.text
+    assert result.title == "Operations Manual"
+    runbook = next(block for block in result.blocks if block.block_type == "heading" and block.text == "Runbook")
+    table_caption = next(block for block in result.blocks if block.block_type == "table_caption")
+    table_row = next(block for block in result.blocks if block.block_type == "table_row")
+
+    assert runbook.section_path == ["Operations Manual", "Runbook"]
+    assert result.metadata["parser_backend"] == "mammoth"
+    assert table_row.metadata["table_id"] == table_caption.metadata["table_id"]
+    assert "Team: Platform" in table_row.text
+
+
+def test_audio_parser_emits_timestamped_transcript_segments():
+    async def _transcribe_audio(**kwargs):
+        return TranscriptionResult(
+            transcript="Welcome everyone. Deployment starts now.",
+            model_name="gpt-4o-mini-transcribe",
+            provider="openai",
+            input_duration_ms=4600,
+            language="en",
+            segments=[
+                {"text": "Welcome everyone.", "start": 0.0, "end": 1.8},
+                {"text": "Deployment starts now.", "start": 1.9, "end": 4.6},
+            ],
+        )
+
+    parser = AudioParser(model_router=SimpleNamespace(transcribe_audio=_transcribe_audio))
+    result = asyncio.run(
+        parser.parse_async(
+            b"audio-bytes",
+            {"filename": "briefing.wav", "_content_type": "audio/wav", "title": "Daily Briefing"},
+        )
+    )
+
+    heading = next(block for block in result.blocks if block.block_type == "heading")
+    segments = [block for block in result.blocks if block.metadata.get("content_kind") == "audio_transcript_segment"]
+
+    assert result.title == "Daily Briefing"
+    assert heading.text == "Audio Transcript"
+    assert len(segments) == 2
+    assert segments[0].metadata["start_ms"] == 0
+    assert segments[0].metadata["end_ms"] == 1800
+    assert result.metadata["transcription_provider"] == "openai"
+    assert result.metadata["segment_count"] == 2
+
+
+def test_audio_parser_warns_when_provider_returns_no_segments():
+    async def _transcribe_audio(**kwargs):
+        return TranscriptionResult(
+            transcript="Single segment fallback.",
+            model_name="gpt-4o-mini-transcribe",
+            provider="openai",
+            input_duration_ms=1200,
+            segments=[],
+        )
+
+    parser = AudioParser(model_router=SimpleNamespace(transcribe_audio=_transcribe_audio))
+    result = asyncio.run(
+        parser.parse_async(
+            b"audio-bytes",
+            {"filename": "briefing.mp3", "_content_type": "audio/mpeg"},
+        )
+    )
+
+    segments = [block for block in result.blocks if block.metadata.get("content_kind") == "audio_transcript_segment"]
+    assert len(segments) == 1
+    assert segments[0].metadata["start_ms"] == 0
+    assert segments[0].metadata["end_ms"] == 1200
+    assert any("single fallback transcript segment" in warning.lower() for warning in result.warnings)
 
 
 def test_pdf_parser_maps_docling_parse_result_to_blocks_and_metadata():
@@ -279,6 +378,7 @@ def test_docling_adapter_promotes_decimal_subsections_after_body_start():
 
     assert [item.heading_level for item in promoted] == [2, 3]
     assert all(item.metadata["normalization_promoted_decimal_subsection"] is True for item in promoted)
+    assert result.stats["decimal_subsection_heading_count"] == 2
 
 
 def test_docling_adapter_suppresses_repeated_page_banner_lines():
@@ -322,6 +422,77 @@ def test_docling_adapter_merges_adjacent_equation_fragments():
     assert "Σ u_i v_i" in equations[0].text
     assert equations[0].metadata["merged_equation_fragments"] == 1
     assert result.stats["merged_equation_fragment_count"] == 1
+
+
+def test_docling_adapter_attaches_closing_equation_tail_to_prior_incomplete_equation():
+    adapter = _DoclingAdapter()
+    fake_document = _FakeDocument(
+        title="Math Notes",
+        pages=[1],
+        items=[
+            _FakeItem(label="heading", text="1. Intro", prov=[{"page_no": 1}]),
+            _FakeItem(label="equation", text="MSE = (1/N) Σ (y_i - ŷ_i", prov=[{"page_no": 1}]),
+            _FakeItem(label="equation", text=") 2", prov=[{"page_no": 1}]),
+        ],
+    )
+
+    result = adapter._normalize_document(fake_document)
+    equations = [item for item in result.items if item.kind == "equation"]
+
+    assert len(equations) == 1
+    assert equations[0].text.endswith(") 2")
+    assert equations[0].metadata["merged_equation_fragments"] == 1
+    assert result.stats["merged_equation_fragment_count"] == 1
+    assert result.stats["equation_fragment_orphan_count"] == 0
+
+
+def test_docling_adapter_does_not_attach_orphan_across_table_boundary():
+    adapter = _DoclingAdapter()
+    fake_document = _FakeDocument(
+        title="Math Notes",
+        pages=[1],
+        items=[
+            _FakeItem(label="heading", text="1. Intro", prov=[{"page_no": 1}]),
+            _FakeItem(label="equation", text="MSE = (1/N) Σ (y_i - ŷ_i", prov=[{"page_no": 1}]),
+            _FakeItem(label="table", caption="Table 1 - Example", data=[["Dataset", "Score"], ["MNIST", "99.7%"]], prov=[{"page_no": 1}]),
+            _FakeItem(label="equation", text=") 2", prov=[{"page_no": 1}]),
+        ],
+    )
+
+    result = adapter._normalize_document(fake_document)
+    equations = [item for item in result.items if item.kind == "equation"]
+
+    assert len(equations) == 2
+    assert equations[0].text == "MSE = (1/N) Σ (y_i - ŷ_i"
+    assert equations[1].text == ") 2"
+    assert equations[1].metadata["equation_fragment_orphan"] is True
+    assert result.stats["merged_equation_fragment_count"] == 0
+    assert result.stats["equation_fragment_orphan_count"] == 1
+
+
+def test_docling_adapter_does_not_skip_nearest_complete_equation_for_older_incomplete_one():
+    adapter = _DoclingAdapter()
+    fake_document = _FakeDocument(
+        title="Math Notes",
+        pages=[1],
+        items=[
+            _FakeItem(label="heading", text="1. Intro", prov=[{"page_no": 1}]),
+            _FakeItem(label="equation", text="MSE = (1/N) Σ (y_i - ŷ_i", prov=[{"page_no": 1}]),
+            _FakeItem(label="equation", text="L Ridge = MSE + λ ||w||²", prov=[{"page_no": 1}]),
+            _FakeItem(label="equation", text=") 2", prov=[{"page_no": 1}]),
+        ],
+    )
+
+    result = adapter._normalize_document(fake_document)
+    equations = [item for item in result.items if item.kind == "equation"]
+
+    assert len(equations) == 3
+    assert equations[0].text == "MSE = (1/N) Σ (y_i - ŷ_i"
+    assert equations[1].text == "L Ridge = MSE + λ ||w||²"
+    assert equations[2].text == ") 2"
+    assert equations[2].metadata["equation_fragment_orphan"] is True
+    assert result.stats["merged_equation_fragment_count"] == 0
+    assert result.stats["equation_fragment_orphan_count"] == 1
 
 
 def test_docling_adapter_keeps_weak_inline_math_as_paragraph():
@@ -373,6 +544,39 @@ def test_docling_adapter_reuses_headers_for_multi_page_table_continuations():
     continuation_row = next(item for item in result.items if "Boston Housing" in item.text)
 
     assert continuation_row.text.startswith("Dataset: Boston Housing")
+    assert continuation_row.metadata["reused_table_headers"] is True
+    assert result.stats["multi_page_table_header_reuse_count"] == 1
+
+
+def test_docling_adapter_reuses_known_headers_when_continuation_headers_are_positional():
+    adapter = _DoclingAdapter()
+    fake_document = _FakeDocument(
+        title="Benchmarks",
+        pages=[1, 2],
+        items=[
+            _FakeItem(
+                label="table",
+                caption="Table 1 - Common Supervised Learning Benchmark Datasets",
+                data=[
+                    ["Dataset", "Domain", "Samples"],
+                    ["MNIST", "Vision", "70,000"],
+                ],
+                prov=[{"page_no": 1}],
+            ),
+            _FakeItem(
+                label="table",
+                data=[
+                    {"0": "Boston Housing", "1": "Tabular", "2": "506"},
+                ],
+                prov=[{"page_no": 2}],
+            ),
+        ],
+    )
+
+    result = adapter._normalize_document(fake_document)
+    continuation_row = next(item for item in result.items if "Boston Housing" in item.text)
+
+    assert continuation_row.text == "Dataset: Boston Housing | Domain: Tabular | Samples: 506"
     assert continuation_row.metadata["reused_table_headers"] is True
     assert result.stats["multi_page_table_header_reuse_count"] == 1
 

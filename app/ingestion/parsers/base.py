@@ -15,6 +15,9 @@ class BaseParser(ABC):
     def parse(self, raw_bytes: bytes, metadata: dict) -> ExtractedDocument:
         raise NotImplementedError
 
+    async def parse_async(self, raw_bytes: bytes, metadata: dict) -> ExtractedDocument:
+        return self.parse(raw_bytes, metadata)
+
     def default_title(self, metadata: dict) -> str | None:
         filename = metadata.get("filename") or metadata.get("storage_path")
         if not filename:
