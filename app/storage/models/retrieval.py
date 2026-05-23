@@ -22,6 +22,14 @@ class RetrievalCandidateRow:
     section_path: list[str] | None = None
     vector_score: float | None = None
     fts_score: float | None = None
+    node_id: UUID | None = None
+    parent_node_id: UUID | None = None
+    previous_chunk_id: UUID | None = None
+    next_chunk_id: UUID | None = None
+    level: int | None = None
+    page_start: int | None = None
+    page_end: int | None = None
+    chunking_version: str | None = None
 
     @classmethod
     def from_row(cls, row: dict) -> "RetrievalCandidateRow":
@@ -37,7 +45,33 @@ class ParentContextRow:
     section_title: str | None
     subsection_title: str | None
     section_path: list[str] | None
+    node_id: UUID | None = None
+    parent_node_id: UUID | None = None
+    level: int | None = None
+    page_start: int | None = None
+    page_end: int | None = None
 
     @classmethod
     def from_row(cls, row: dict) -> "ParentContextRow":
+        return cls(**row)
+
+
+@dataclass(slots=True)
+class StructureNodeRow:
+    id: UUID
+    document_id: UUID
+    node_type: str
+    node_key: str
+    title: str | None
+    section_path: list[str] | None
+    level: int | None
+    page_start: int | None
+    page_end: int | None
+    block_order_start: int
+    block_order_end: int
+    parent_node_id: UUID | None = None
+    metadata: dict[str, Any] | None = None
+
+    @classmethod
+    def from_row(cls, row: dict) -> "StructureNodeRow":
         return cls(**row)

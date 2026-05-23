@@ -8,7 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.entities.rag import ExtractedBlock
-from app.ingestion.chunking import ChunkDraft
+from app.ingestion.chunking import ChunkDraft, StructureEdgeDraft, StructureNodeDraft
 
 
 class IngestionJobCreateInput(BaseModel):
@@ -50,6 +50,8 @@ class ChunkReplacementInput(BaseModel):
     workspace_id: UUID
     document_id: UUID
     blocks: list[ExtractedBlock]
+    nodes: list[StructureNodeDraft] = Field(default_factory=list)
+    edges: list[StructureEdgeDraft] = Field(default_factory=list)
     chunks: list[ChunkDraft]
     embeddings: list[list[float]]
     embedding_model: str
