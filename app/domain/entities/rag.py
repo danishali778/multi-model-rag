@@ -84,6 +84,14 @@ class RetrievalCandidate:
     fts_score: float | None = None
     fused_score: float = 0.0
     selection_role: str | None = None
+    node_id: UUID | None = None
+    parent_node_id: UUID | None = None
+    previous_chunk_id: UUID | None = None
+    next_chunk_id: UUID | None = None
+    level: int | None = None
+    page_start: int | None = None
+    page_end: int | None = None
+    chunking_version: str | None = None
 
 
 @dataclass(slots=True)
