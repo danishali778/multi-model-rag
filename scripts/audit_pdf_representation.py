@@ -135,6 +135,18 @@ def build_representation_audit(
     preview: int,
 ) -> dict[str, Any]:
     parser_diagnostics = ((document.get("metadata") or {}).get("parser_diagnostics") or {})
+    derived_decimal_subsection_heading_count = sum(
+        1
+        for block in blocks
+        if block.get("block_type") == "heading"
+        and ((block.get("metadata") or {}).get("normalization_promoted_decimal_subsection") is True)
+    )
+    derived_reused_table_header_count = sum(
+        1
+        for block in blocks
+        if ((block.get("metadata") or {}).get("reused_table_headers") is True)
+        and not _row_uses_positional_fields(str(block.get("text") or ""))
+    )
     block_kind_counts = _count_kinds(blocks, fallback_field="block_type")
     chunk_kind_counts = _count_kinds(chunks, fallback_field="chunk_type")
     front_matter_blocks = [
@@ -227,10 +239,14 @@ def build_representation_audit(
             "abstract_non_abstract_noise_count": len(abstract_noise),
             "title_emitted_as_heading": title_emitted_as_heading,
             "page_artifact_suppressed_count": int(parser_diagnostics.get("page_artifact_suppressed_count", 0)),
-            "decimal_subsection_heading_count": int(parser_diagnostics.get("decimal_subsection_heading_count", 0)),
+            "decimal_subsection_heading_count": derived_decimal_subsection_heading_count or int(
+                parser_diagnostics.get("decimal_subsection_heading_count", 0)
+            ),
             "merged_equation_fragment_count": int(parser_diagnostics.get("merged_equation_fragment_count", 0)),
             "equation_fragment_orphan_count": int(parser_diagnostics.get("equation_fragment_orphan_count", 0)),
-            "multi_page_table_header_reuse_count": int(parser_diagnostics.get("multi_page_table_header_reuse_count", 0)),
+            "multi_page_table_header_reuse_count": derived_reused_table_header_count or int(
+                parser_diagnostics.get("multi_page_table_header_reuse_count", 0)
+            ),
             "warning_flags": warnings,
         },
         "front_matter": {
@@ -469,6 +485,10 @@ def _is_suspicious_heading(text: str) -> bool:
     if stripped.startswith("SUMMARY OF") or "OF" in stripped and stripped == stripped.upper():
         return True
     return False
+
+
+def _row_uses_positional_fields(text: str) -> bool:
+    return bool(re.search(r"(?:^|\|\s*)\d+:\s*", text))
 
 
 def _preview(value: str | None, length: int) -> str | None:
