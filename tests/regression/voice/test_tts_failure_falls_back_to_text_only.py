@@ -1,4 +1,11 @@
-import asyncio
+python scripts/audit_pdf_representation.py \
+  --document-id b14e2350-8349-4bd6-b01c-cda595c41b3c \
+  --json-output tests/manual/representation/i220584_i222141_representation_audit_docling_v2.json
+
+python scripts/trace_rag_pipeline.py \
+  --document-id b14e2350-8349-4bd6-b01c-cda595c41b3c \
+  --question "What value does Table I report for MAE?" \
+  --json-output tests/manual/representation/i220584_i222141_table_trace_docling_v2.jsonimport asyncio
 from types import SimpleNamespace
 from uuid import uuid4
 
