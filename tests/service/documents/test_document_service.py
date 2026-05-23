@@ -117,6 +117,36 @@ def test_create_upload_target_normalizes_signed_upload_url():
     assert response.upload_url == "https://example.supabase.co/storage/v1/object/upload/sign/raw-documents/path?token=abc"
 
 
+def test_create_upload_target_infers_audio_source_type():
+    repo = _DocumentRepo()
+    ingestion_repo = _IngestionRepo()
+    settings = Settings(
+        _env_file=None,
+        supabase_raw_bucket="raw-documents",
+        supabase_storage_url="https://example.supabase.co",
+        supabase_storage_service_key="service-role",
+    )
+    service = DocumentService(
+        document_repository=repo,
+        ingestion_repository=ingestion_repo,
+        ingestion_service=SimpleNamespace(),
+        storage=_Storage(),
+        settings=settings,
+    )
+    principal = SimpleNamespace(user_id=uuid4())
+
+    response = asyncio.run(
+        service.create_upload_target(
+            uuid4(),
+            principal,
+            CreateUploadUrlRequest(filename="briefing.wav", content_type="audio/wav"),
+        )
+    )
+
+    assert repo.created_payload.source_type == "audio"
+    assert response.path.endswith("/raw/briefing.wav")
+
+
 def test_create_text_document_sync_calls_ingest_document():
     repo = _DocumentRepo()
     ingestion_repo = _IngestionRepo()

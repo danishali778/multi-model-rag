@@ -1,8 +1,11 @@
+import asyncio
+from types import SimpleNamespace
 from uuid import uuid4
 
 from app.core.config import Settings
 from app.domain.entities.rag import RetrievalCandidate
 from app.retrieval.retriever import (
+    RetrievalService,
     _apply_structural_boosts,
     _assemble_context,
     _classify_query,
@@ -12,6 +15,7 @@ from app.retrieval.retriever import (
     _query_strategy,
     _rewrite_query,
     _should_rewrite,
+    _should_use_graph_retrieval,
 )
 from app.storage.models.retrieval import RetrievalCandidateRow
 
@@ -238,3 +242,135 @@ def test_context_assembly_avoids_table_row_spam_for_summary_queries():
 
     assert len([item for item in context.candidates if item.metadata.get("content_kind") == "table_row"]) == 1
     assert any(item.section_title == "XV. CONCLUSION" for item in context.candidates)
+
+
+def test_graph_context_assembly_limits_same_node_repetition():
+    node_id = uuid4()
+    parent_node_id = uuid4()
+    seed = _candidate("Chunking preserves section-local continuity.", chunk_index=0, fused_score=0.3)
+    seed.node_id = node_id
+    seed.parent_node_id = parent_node_id
+    seed.chunking_version = "hybrid-graph-v1"
+    seed.metadata = {"graph_relation": "seed", "content_kind": "paragraph"}
+
+    support = _candidate("Neighbor chunks add local context around the seed.", chunk_index=1, fused_score=0.28)
+    support.node_id = node_id
+    support.parent_node_id = parent_node_id
+    support.chunking_version = "hybrid-graph-v1"
+    support.metadata = {"graph_relation": "neighbor", "content_kind": "paragraph"}
+
+    extra = _candidate("A third same-node chunk should be dropped for fact queries.", chunk_index=2, fused_score=0.27)
+    extra.node_id = node_id
+    extra.parent_node_id = parent_node_id
+    extra.chunking_version = "hybrid-graph-v1"
+    extra.metadata = {"graph_relation": "same_node_child", "content_kind": "paragraph"}
+
+    ancestor = _candidate("Section summary gives broader methodological framing.", chunk_index=3, fused_score=0.26)
+    ancestor.node_id = uuid4()
+    ancestor.parent_node_id = uuid4()
+    ancestor.chunking_version = "hybrid-graph-v1"
+    ancestor.metadata = {"graph_relation": "ancestor_parent", "content_kind": "section_summary"}
+
+    context = _assemble_context(
+        [seed, support, extra, ancestor],
+        requested_top_k=4,
+        max_chunks_per_document=4,
+        context_token_budget=600,
+        query_class="fact",
+        graph_enabled=True,
+    )
+
+    assert len([item for item in context.candidates if item.node_id == node_id]) == 2
+    assert any(item.selection_role == "ancestor_context" for item in context.candidates)
+
+
+def test_should_use_graph_retrieval_requires_graph_version_and_nodes():
+    settings = _settings(retrieval_config_version="hybrid-graph-v1")
+    candidate = _candidate("Chunked content")
+    candidate.node_id = uuid4()
+    candidate.chunking_version = "hybrid-graph-v1"
+
+    assert _should_use_graph_retrieval([candidate], settings) is True
+    candidate.chunking_version = "recursive-v1"
+    assert _should_use_graph_retrieval([candidate], settings) is False
+
+
+class _GraphRepo:
+    async def get_chunks_by_node_ids(self, *, workspace_id, user_id, node_ids, chunk_role, sensitivity_ceiling):
+        rows = []
+        if chunk_role == "parent":
+            for node_id in node_ids:
+                rows.append(
+                    RetrievalCandidateRow(
+                        id=uuid4(),
+                        document_id=uuid4(),
+                        chunk_index=10,
+                        content="Parent summary for node",
+                        metadata={"content_kind": "section_summary"},
+                        title="Doc",
+                        sensitivity="internal",
+                        node_id=node_id,
+                        chunking_version="hybrid-graph-v1",
+                    )
+                )
+        return rows
+
+    async def get_neighboring_chunks(self, *, workspace_id, user_id, chunk_ids, sensitivity_ceiling):
+        return [
+            RetrievalCandidateRow(
+                id=uuid4(),
+                document_id=uuid4(),
+                chunk_index=11,
+                content="Immediate neighbor child chunk",
+                metadata={"content_kind": "paragraph"},
+                title="Doc",
+                sensitivity="internal",
+                node_id=uuid4(),
+                chunking_version="hybrid-graph-v1",
+            )
+        ]
+
+    async def get_ancestor_nodes(self, *, workspace_id, user_id, node_ids, max_depth=2):
+        return []
+
+    async def get_nodes_by_ids(self, *, workspace_id, user_id, node_ids):
+        return {}
+
+    async def get_sibling_nodes(self, *, workspace_id, user_id, node_ids):
+        return []
+
+
+def test_graph_expansion_adds_parent_and_neighbor_candidates():
+    service = RetrievalService(
+        retrieval_repository=_GraphRepo(),
+        model_router=SimpleNamespace(),
+        reranker=SimpleNamespace(),
+        settings=SimpleNamespace(retrieval_config_version="hybrid-graph-v1"),
+    )
+    seed = RetrievalCandidate(
+        chunk_id=uuid4(),
+        document_id=uuid4(),
+        chunk_index=0,
+        title="Doc",
+        content="Seed chunk",
+        metadata={"content_kind": "paragraph", "graph_relation": "seed"},
+        sensitivity="internal",
+        fused_score=0.3,
+        node_id=uuid4(),
+        chunking_version="hybrid-graph-v1",
+    )
+
+    expanded = asyncio.run(
+        service._expand_graph_candidates(
+            candidates=[seed],
+            workspace_id=uuid4(),
+            user_id=uuid4(),
+            sensitivity_ceiling=None,
+            query_class="fact",
+            query_features={"has_table_terms": False, "has_equation_terms": False},
+        )
+    )
+
+    relations = {item.metadata.get("graph_relation") for item in expanded}
+    assert "same_node_parent" in relations
+    assert "neighbor" in relations

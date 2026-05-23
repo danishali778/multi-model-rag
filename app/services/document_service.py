@@ -252,4 +252,15 @@ def _infer_source_type(filename: str, content_type: str) -> str:
         return "docx"
     if lowered.endswith(".html") or lowered.endswith(".htm") or content_type == "text/html":
         return "html"
+    if lowered.endswith((".wav", ".mp3", ".webm", ".ogg", ".m4a", ".mp4")) or content_type in {
+        "audio/wav",
+        "audio/x-wav",
+        "audio/mpeg",
+        "audio/mp3",
+        "audio/webm",
+        "audio/ogg",
+        "audio/mp4",
+        "audio/x-m4a",
+    }:
+        return "audio"
     raise BadRequestError(f"Unsupported upload content type '{content_type}'.")

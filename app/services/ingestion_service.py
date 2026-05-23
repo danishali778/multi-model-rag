@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 from app.domain.entities.rag import ExtractedBlock, ExtractedDocument, IngestionTaskPayload
 from app.domain.errors import BadRequestError
-from app.ingestion.pipeline import build_document_chunks, content_hash, content_hash_bytes
+from app.ingestion.pipeline import build_document_chunk_graph, content_hash, content_hash_bytes
 from app.storage.models.ingestion import ChunkReplacementInput, IngestionJobUpdateInput, StageExtractedDocumentInput
 
 
@@ -34,6 +34,7 @@ class IngestionService:
         task_runner: Any,
         telemetry: Any,
         settings: Any,
+        audio_repository: Any | None = None,
     ) -> None:
         self._document_repository = document_repository
         self._ingestion_repository = ingestion_repository
@@ -43,6 +44,7 @@ class IngestionService:
         self._task_runner = task_runner
         self._telemetry = telemetry
         self._settings = settings
+        self._audio_repository = audio_repository
 
     async def enqueue_ingestion(self, payload: IngestionTaskPayload) -> None:
         await self._task_runner.enqueue_ingestion_job(payload)
@@ -184,7 +186,7 @@ class IngestionService:
             "storage_path": path,
             "title": document.title,
         }
-        parsed = self._parser_registry.parse(
+        parsed = await self._parser_registry.parse(
             source_type=document.source_type,
             raw_bytes=raw_bytes,
             metadata=parse_metadata,
@@ -287,6 +289,11 @@ class IngestionService:
                 embedding_model=extracted.embedding_model,
             )
         )
+        if extracted.source_type == "audio" and self._audio_repository is not None:
+            await self._audio_repository.update_audio_document(
+                document_id=document_id,
+                payload=self._audio_document_update_payload(extracted),
+            )
 
     async def _index_extracted_document(
         self,
@@ -299,18 +306,22 @@ class IngestionService:
             base_metadata.setdefault("title", extracted.document.title)
         chunk_count = 0
         embedding_model = extracted.embedding_model
-        chunks = build_document_chunks(
+        build_result = build_document_chunk_graph(
             document=extracted.document,
             chunk_size=getattr(self._settings, "chunk_size", 900),
             chunk_overlap=getattr(self._settings, "chunk_overlap", 120),
             metadata=base_metadata,
+            chunking_version=extracted.chunking_version,
         )
+        chunks = build_result.chunks
         if extracted.should_skip:
             chunks = []
 
         embeddings: list[list[float]] = []
         if chunks:
-            embedding_result = await self._model_router.embed_texts([chunk.content for chunk in chunks])
+            embedding_result = await self._model_router.embed_texts(
+                [chunk.embedding_text or chunk.content for chunk in chunks]
+            )
             embeddings = embedding_result.vectors
             embedding_model = embedding_result.model_name
             chunk_count = len(chunks)
@@ -319,6 +330,8 @@ class IngestionService:
                 workspace_id=payload.workspace_id,
                 document_id=payload.document_id,
                 blocks=extracted.document.blocks,
+                nodes=build_result.nodes,
+                edges=build_result.edges,
                 chunks=chunks,
                 embeddings=embeddings,
                 embedding_model=embedding_model,
@@ -369,6 +382,25 @@ class IngestionService:
             return self._settings.profile_targets("embedding")[0].model_name
         except Exception:
             return getattr(self._settings, "hf_embedding_model", "embedding")
+
+    def _audio_document_update_payload(self, extracted: ExtractedDocumentResult):
+        from app.storage.models.audio import AudioDocumentUpdateInput
+
+        metadata = extracted.document.metadata
+        return AudioDocumentUpdateInput(
+            mime_type=metadata.get("audio_mime_type"),
+            audio_format=metadata.get("audio_format"),
+            estimated_duration_ms=metadata.get("audio_duration_ms"),
+            transcript_language=metadata.get("transcript_language"),
+            transcription_provider=metadata.get("transcription_provider"),
+            transcription_model=metadata.get("transcription_model"),
+            segment_count=metadata.get("segment_count"),
+            warning_count=len(extracted.document.warnings),
+            warnings=list(extracted.document.warnings),
+            metadata={
+                "parser_backend": metadata.get("parser_backend"),
+            },
+        )
 
     @staticmethod
     def _public_metadata(metadata: dict[str, Any]) -> dict[str, Any]:

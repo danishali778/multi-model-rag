@@ -69,6 +69,7 @@ class RetrievalService:
             fts_weight=strategy["fts_weight"],
         )
         candidates = _apply_structural_boosts(candidates, query_text, query_features=query_features)
+        graph_enabled = _should_use_graph_retrieval(candidates, self._settings)
         rewrite_used = False
         no_source_reason: str | None = None
         rewritten_query = query_text
@@ -103,6 +104,17 @@ class RetrievalService:
                     fts_weight=strategy["fts_weight"],
                 )
                 candidates = _apply_structural_boosts(candidates, rewritten, query_features=query_features)
+                graph_enabled = _should_use_graph_retrieval(candidates, self._settings)
+
+        if graph_enabled and candidates:
+            candidates = await self._expand_graph_candidates(
+                candidates=list(candidates),
+                workspace_id=request.workspace_id,
+                user_id=request.user_id,
+                sensitivity_ceiling=request.sensitivity_ceiling,
+                query_class=query_class,
+                query_features=query_features,
+            )
 
         reranker_used = False
         if candidates:
@@ -125,6 +137,7 @@ class RetrievalService:
             min_incremental_terms=strategy["min_incremental_terms"],
             prefer_diversity=strategy["prefer_diversity"],
             query_class=query_class,
+            graph_enabled=graph_enabled,
         )
         selected_sources = context.candidates
         if not selected_sources:
@@ -148,13 +161,114 @@ class RetrievalService:
                 "fts": len(fts_rows),
                 "selected": len(selected_sources),
             },
-            retrieval_config_version=getattr(self._settings, "retrieval_config_version", "hybrid-v1"),
+            retrieval_config_version=(
+                "hybrid-graph-v1" if graph_enabled else getattr(self._settings, "retrieval_config_version", "hybrid-v1")
+            ),
             reranker_model=getattr(self._reranker, "model_name", None),
             query_class=query_class,
             strategy_name=strategy["name"],
             query_features=query_features,
             rewritten_query=rewritten_query if rewrite_used else None,
         )
+
+    async def _expand_graph_candidates(
+        self,
+        *,
+        candidates: list[RetrievalCandidate],
+        workspace_id: UUID,
+        user_id: UUID,
+        sensitivity_ceiling: str | None,
+        query_class: str,
+        query_features: dict[str, Any],
+    ) -> list[RetrievalCandidate]:
+        expanded: dict[UUID, RetrievalCandidate] = {}
+        for candidate in candidates:
+            candidate.metadata.setdefault("graph_relation", "seed")
+            expanded[candidate.chunk_id] = candidate
+
+        seeds = [candidate for candidate in candidates[: min(6, len(candidates))] if candidate.node_id is not None]
+        for seed in seeds:
+            if seed.node_id is None:
+                continue
+
+            same_node_parent_rows = await self._retrieval_repository.get_chunks_by_node_ids(
+                workspace_id=workspace_id,
+                user_id=user_id,
+                node_ids=[seed.node_id],
+                chunk_role="parent",
+                sensitivity_ceiling=sensitivity_ceiling,
+            )
+            for row in same_node_parent_rows:
+                self._merge_graph_candidate(expanded, row=row, seed=seed, relation="same_node_parent")
+
+            neighbor_rows = await self._retrieval_repository.get_neighboring_chunks(
+                workspace_id=workspace_id,
+                user_id=user_id,
+                chunk_ids=[seed.chunk_id],
+                sensitivity_ceiling=sensitivity_ceiling,
+            )
+            for row in neighbor_rows:
+                self._merge_graph_candidate(expanded, row=row, seed=seed, relation="neighbor")
+
+            if query_class in {"fact", "numeric_detail", "compare"} or query_features.get("has_table_terms") or query_features.get("has_equation_terms"):
+                same_node_child_rows = await self._retrieval_repository.get_chunks_by_node_ids(
+                    workspace_id=workspace_id,
+                    user_id=user_id,
+                    node_ids=[seed.node_id],
+                    chunk_role="child",
+                    sensitivity_ceiling=sensitivity_ceiling,
+                )
+                for row in same_node_child_rows:
+                    if row.id == seed.chunk_id:
+                        continue
+                    if query_class != "compare" and str(seed.metadata.get("content_kind") or "") not in {"table_row", "equation", "equation_explanation"}:
+                        continue
+                    self._merge_graph_candidate(expanded, row=row, seed=seed, relation="same_node_child")
+
+            ancestor_depth = 2 if query_class in {"summary", "why", "conclusion"} else 1
+            ancestor_nodes = await self._retrieval_repository.get_ancestor_nodes(
+                workspace_id=workspace_id,
+                user_id=user_id,
+                node_ids=[seed.node_id],
+                max_depth=ancestor_depth,
+            )
+            ancestor_node_ids = [node.id for node in ancestor_nodes if node.node_type == "section"]
+            if ancestor_node_ids:
+                ancestor_rows = await self._retrieval_repository.get_chunks_by_node_ids(
+                    workspace_id=workspace_id,
+                    user_id=user_id,
+                    node_ids=ancestor_node_ids,
+                    chunk_role="parent",
+                    sensitivity_ceiling=sensitivity_ceiling,
+                )
+                for row in ancestor_rows:
+                    self._merge_graph_candidate(expanded, row=row, seed=seed, relation="ancestor_parent")
+
+            if query_class in {"summary", "why", "conclusion", "compare"}:
+                seed_node_map = await self._retrieval_repository.get_nodes_by_ids(
+                    workspace_id=workspace_id,
+                    user_id=user_id,
+                    node_ids=[seed.node_id],
+                )
+                sibling_nodes = await self._retrieval_repository.get_sibling_nodes(
+                    workspace_id=workspace_id,
+                    user_id=user_id,
+                    node_ids=[seed.node_id],
+                )
+                ordered_siblings = _nearest_siblings(seed_node_map.get(seed.node_id), sibling_nodes)
+                sibling_ids = [node.id for node in ordered_siblings[:2]]
+                if sibling_ids:
+                    sibling_rows = await self._retrieval_repository.get_chunks_by_node_ids(
+                        workspace_id=workspace_id,
+                        user_id=user_id,
+                        node_ids=sibling_ids,
+                        chunk_role="parent",
+                        sensitivity_ceiling=sensitivity_ceiling,
+                    )
+                    for row in sibling_rows:
+                        self._merge_graph_candidate(expanded, row=row, seed=seed, relation="sibling_parent")
+
+        return sorted(expanded.values(), key=lambda item: item.fused_score, reverse=True)
 
     async def _hydrate_parent_context(self, candidates: Sequence[RetrievalCandidate]) -> None:
         parent_ids = [candidate.parent_block_id for candidate in candidates if candidate.parent_block_id is not None]
@@ -173,6 +287,30 @@ class RetrievalService:
             candidate.section_title = candidate.section_title or parent.section_title
             candidate.subsection_title = candidate.subsection_title or parent.subsection_title
             candidate.section_path = candidate.section_path or list(parent.section_path or [])
+            candidate.node_id = candidate.node_id or parent.node_id
+            candidate.parent_node_id = candidate.parent_node_id or parent.parent_node_id
+            candidate.level = candidate.level or parent.level
+            candidate.page_start = candidate.page_start or parent.page_start
+            candidate.page_end = candidate.page_end or parent.page_end
+
+    def _merge_graph_candidate(
+        self,
+        store: dict[UUID, RetrievalCandidate],
+        *,
+        row: RetrievalCandidateRow,
+        seed: RetrievalCandidate,
+        relation: str,
+    ) -> None:
+        relation_score = _graph_relation_score(relation)
+        existing = store.get(row.id)
+        candidate = _candidate_from_row(row, vector_score=row.vector_score, fts_score=row.fts_score, fused_score=seed.fused_score * relation_score)
+        candidate.metadata["graph_relation"] = relation
+        if existing is None:
+            store[row.id] = candidate
+            return
+        existing.fused_score = max(existing.fused_score, candidate.fused_score)
+        if relation != "seed":
+            existing.metadata.setdefault("graph_relation", relation)
 
 
 def _merge_candidates(
@@ -233,6 +371,14 @@ def _candidate_from_row(
         vector_score=vector_score,
         fts_score=fts_score,
         fused_score=fused_score,
+        node_id=row.node_id,
+        parent_node_id=row.parent_node_id,
+        previous_chunk_id=row.previous_chunk_id,
+        next_chunk_id=row.next_chunk_id,
+        level=row.level,
+        page_start=row.page_start,
+        page_end=row.page_end,
+        chunking_version=row.chunking_version,
     )
 
 
@@ -371,6 +517,7 @@ def _assemble_context(
     min_incremental_terms: int = 0,
     prefer_diversity: bool = False,
     query_class: str = "fact",
+    graph_enabled: bool = False,
 ) -> ContextAssemblyResult:
     selected: list[RetrievalCandidate] = []
     source_blocks: list[str] = []
@@ -379,6 +526,7 @@ def _assemble_context(
     selected_sections: set[str] = set()
     total_tokens = 0
     selected_structure_groups: set[str] = set()
+    per_node_counts: dict[UUID, int] = {}
 
     for candidate in candidates:
         current_count = per_document_counts.get(candidate.document_id, 0)
@@ -387,7 +535,13 @@ def _assemble_context(
             continue
         content_kind = str(candidate.metadata.get("content_kind") or candidate.chunk_type or "")
         structure_group = str(candidate.metadata.get("structure_group_id") or "") or None
-        section_key = _candidate_section_key(candidate)
+        section_key = _candidate_structure_key(candidate) if graph_enabled else _candidate_section_key(candidate)
+        if graph_enabled and candidate.node_id is not None:
+            node_count = per_node_counts.get(candidate.node_id, 0)
+            node_limit = 3 if query_class == "compare" else 2
+            if node_count >= node_limit:
+                dropped_reasons.append("duplicate_section")
+                continue
         if (
             prefer_diversity
             and section_key in selected_sections
@@ -432,6 +586,8 @@ def _assemble_context(
         source_blocks.append(source_block)
         per_document_counts[candidate.document_id] = current_count + 1
         selected_sections.add(section_key)
+        if graph_enabled and candidate.node_id is not None:
+            per_node_counts[candidate.node_id] = per_node_counts.get(candidate.node_id, 0) + 1
         if structure_group:
             selected_structure_groups.add(structure_group)
         total_tokens += estimated_tokens
@@ -452,6 +608,7 @@ def _assemble_context(
             "support_sections_target": support_sections_target,
             "prefer_diversity": prefer_diversity,
             "min_incremental_terms": min_incremental_terms,
+            "graph_enabled": graph_enabled,
         },
     )
 
@@ -620,6 +777,14 @@ def _candidate_section_key(candidate: RetrievalCandidate) -> str:
     return candidate.title.lower()
 
 
+def _candidate_structure_key(candidate: RetrievalCandidate) -> str:
+    if candidate.parent_node_id:
+        return f"parent-node:{candidate.parent_node_id}"
+    if candidate.node_id:
+        return f"node:{candidate.node_id}"
+    return _candidate_section_key(candidate)
+
+
 def _adds_incremental_value(
     candidate: RetrievalCandidate,
     selected: Sequence[RetrievalCandidate],
@@ -640,6 +805,15 @@ def _selection_role(
     support_sections_target: int,
     query_class: str,
 ) -> str:
+    graph_relation = str(candidate.metadata.get("graph_relation") or "")
+    if graph_relation == "seed":
+        return "primary_seed"
+    if graph_relation in {"same_node_parent", "same_node_child", "neighbor"}:
+        return "local_support"
+    if graph_relation == "ancestor_parent":
+        return "ancestor_context"
+    if graph_relation == "sibling_parent":
+        return "sibling_context"
     if not selected:
         return "primary"
     if _candidate_section_key(candidate) not in selected_sections and len(selected_sections) < support_sections_target:
@@ -647,3 +821,32 @@ def _selection_role(
     if query_class in {"summary", "compare", "why", "conclusion"}:
         return "supporting"
     return "supplemental"
+
+
+def _should_use_graph_retrieval(candidates: Sequence[RetrievalCandidate], settings: Any) -> bool:
+    if getattr(settings, "retrieval_config_version", "hybrid-v1") != "hybrid-graph-v1":
+        return False
+    return any(candidate.chunking_version == "hybrid-graph-v1" and candidate.node_id is not None for candidate in candidates)
+
+
+def _graph_relation_score(relation: str) -> float:
+    return {
+        "seed": 1.0,
+        "same_node_parent": 0.97,
+        "neighbor": 0.94,
+        "same_node_child": 0.9,
+        "ancestor_parent": 0.87,
+        "sibling_parent": 0.84,
+    }.get(relation, 0.8)
+
+
+def _nearest_siblings(seed_node: Any, siblings: Sequence[Any]) -> list[Any]:
+    if seed_node is None:
+        return list(siblings)
+    return sorted(
+        siblings,
+        key=lambda node: (
+            abs((node.block_order_start or 0) - (seed_node.block_order_start or 0)),
+            node.block_order_start,
+        ),
+    )
