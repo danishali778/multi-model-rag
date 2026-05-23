@@ -2,7 +2,7 @@ from hashlib import sha256
 from typing import Any
 
 from app.domain.entities.rag import ExtractedDocument
-from app.ingestion.chunking import ChunkDraft, chunk_document, chunk_text
+from app.ingestion.chunking import ChunkBuildResult, ChunkDraft, chunk_document, chunk_document_graph, chunk_text
 
 
 def content_hash(text: str) -> str:
@@ -34,10 +34,29 @@ def build_document_chunks(
     chunk_size: int,
     chunk_overlap: int,
     metadata: dict[str, Any],
+    chunking_version: str | None = None,
 ) -> list[ChunkDraft]:
     return chunk_document(
         document,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         base_metadata=metadata,
+        chunking_version=chunking_version,
+    )
+
+
+def build_document_chunk_graph(
+    document: ExtractedDocument,
+    *,
+    chunk_size: int,
+    chunk_overlap: int,
+    metadata: dict[str, Any],
+    chunking_version: str | None = None,
+) -> ChunkBuildResult:
+    return chunk_document_graph(
+        document,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        base_metadata=metadata,
+        chunking_version=chunking_version,
     )
