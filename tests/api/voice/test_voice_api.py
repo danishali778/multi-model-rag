@@ -28,8 +28,18 @@ def test_voice_chat_route_returns_service_response():
             metadata={"profile": "balanced"},
         )
 
+    captured = {}
+
+    async def fake_check_request(*, principal, workspace_id, route_key, profile=None):
+        captured["workspace_id"] = workspace_id
+        captured["route_key"] = route_key
+        captured["profile"] = profile
+
     context = WorkspaceContext(
-        container=SimpleNamespace(voice_chat_service=SimpleNamespace(answer_voice_turn=fake_answer_voice_turn)),
+        container=SimpleNamespace(
+            voice_chat_service=SimpleNamespace(answer_voice_turn=fake_answer_voice_turn),
+            rate_limiter=SimpleNamespace(check_request=fake_check_request),
+        ),
         principal=principal,
         workspace_id=workspace_id,
     )
@@ -58,6 +68,9 @@ def test_voice_chat_route_returns_service_response():
     )
 
     assert response.user_transcript == "Hello world"
+    assert captured["workspace_id"] == str(workspace_id)
+    assert captured["route_key"] == "/v1/voice/chat"
+    assert captured["profile"] == "balanced"
 
 
 def test_voice_chat_route_rejects_invalid_metadata_shape():

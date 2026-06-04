@@ -11,6 +11,12 @@ async def answer_question(
     payload: ChatRequest,
     context: WorkspaceContext = Depends(get_workspace_context),
 ) -> ChatResponse:
+    await context.container.rate_limiter.check_request(
+        principal=context.principal,
+        workspace_id=str(context.workspace_id),
+        route_key="/v1/chat",
+        profile=payload.profile or "balanced",
+    )
     return await context.container.chat_service.answer_question(
         workspace_id=context.workspace_id,
         principal=context.principal,

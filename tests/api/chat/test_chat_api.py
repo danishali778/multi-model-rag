@@ -30,8 +30,18 @@ def test_chat_route_delegates_to_chat_service():
         assert payload.query == "What is the remote work policy?"
         return expected
 
+    captured = {}
+
+    async def fake_check_request(*, principal, workspace_id, route_key, profile=None):
+        captured["workspace_id"] = workspace_id
+        captured["route_key"] = route_key
+        captured["profile"] = profile
+
     context = WorkspaceContext(
-        container=SimpleNamespace(chat_service=SimpleNamespace(answer_question=fake_answer_question)),
+        container=SimpleNamespace(
+            chat_service=SimpleNamespace(answer_question=fake_answer_question),
+            rate_limiter=SimpleNamespace(check_request=fake_check_request),
+        ),
         principal=Principal(user_id=uuid4(), email="dev@example.com", auth_method="api_key", role="owner"),
         workspace_id=uuid4(),
     )
@@ -41,3 +51,6 @@ def test_chat_route_delegates_to_chat_service():
     )
 
     assert response == expected
+    assert captured["workspace_id"] == str(context.workspace_id)
+    assert captured["route_key"] == "/v1/chat"
+    assert captured["profile"] == "balanced"
