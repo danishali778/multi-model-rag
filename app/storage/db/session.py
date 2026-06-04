@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
 
 import psycopg
 from psycopg.rows import dict_row
@@ -77,19 +77,27 @@ class Database:
                         ) as has_workspaces,
                         exists (
                             select 1 from information_schema.tables
+                            where table_schema = 'public' and table_name = 'evaluation_runs'
+                        ) as has_evaluation_runs,
+                        exists (
+                            select 1 from information_schema.tables
                             where table_schema = 'public' and table_name = 'tenants'
                         ) as has_tenants
                         """
                     )
                     state = await cur.fetchone()
                     if state['has_workspaces']:
-                        for path in migration_files:
+                        for path_name in _workspace_bootstrap_applied_migrations(
+                            migration_files,
+                            has_evaluation_runs=bool(state["has_evaluation_runs"]),
+                        ):
                             await cur.execute(
                                 "insert into schema_migrations (filename) values (%s) on conflict (filename) do nothing",
-                                (path.name,),
+                                (path_name,),
                             )
                         await conn.commit()
-                        return
+                        await cur.execute("select filename from schema_migrations order by filename")
+                        applied = {row['filename'] for row in await cur.fetchall()}
                     if state['has_tenants']:
                         for path in migration_files:
                             if path.name < '0006_workspace_schema_cutover.sql':
@@ -111,3 +119,14 @@ class Database:
                         (path.name,),
                     )
                     await conn.commit()
+
+
+def _workspace_bootstrap_applied_migrations(
+    migration_files: Sequence[Path],
+    *,
+    has_evaluation_runs: bool,
+) -> set[str]:
+    applied = {path.name for path in migration_files}
+    if not has_evaluation_runs:
+        applied.discard("0011_workspace_evaluation_runs.sql")
+    return applied

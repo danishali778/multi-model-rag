@@ -37,11 +37,11 @@ class RetrievalRepository:
         query = f"""
             select
                 {_chunk_select_fields("dc", "d")},
-                1 - (dc.embedding <=> %s::extensions.vector) as vector_score
+                1 - (dc.embedding OPERATOR(extensions.<=>) %s::extensions.vector) as vector_score
             from document_chunks dc
             join documents d on d.id = dc.document_id
             where {' and '.join(clauses)}
-            order by dc.embedding <=> %s::extensions.vector
+            order by dc.embedding OPERATOR(extensions.<=>) %s::extensions.vector
             limit %s
         """
         async with self.db.connection() as conn:
@@ -76,11 +76,11 @@ class RetrievalRepository:
         query = f"""
             select
                 {_chunk_select_fields("dc", "d")},
-                1 - (dc.embedding <=> %s::extensions.vector) as vector_score
+                1 - (dc.embedding OPERATOR(extensions.<=>) %s::extensions.vector) as vector_score
             from document_chunks dc
             join documents d on d.id = dc.document_id
             where {' and '.join(clauses)}
-            order by dc.embedding <=> %s::extensions.vector
+            order by dc.embedding OPERATOR(extensions.<=>) %s::extensions.vector
             limit %s
         """
         vector_param = vector_literal(query_embedding)
