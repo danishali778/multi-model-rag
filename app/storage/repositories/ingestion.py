@@ -69,11 +69,11 @@ class IngestionRepository:
             select ij.*
             from ingestion_jobs ij
             join documents d on d.id = ij.document_id
-            where ij.workspace_id = %s and ij.id = %s
+            where ij.workspace_id = %s and ij.id = %s and d.created_by = %s and d.deleted_at is null
         """
         async with self.db.connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute(query, (workspace_id, job_id))
+                await cur.execute(query, (workspace_id, job_id, user_id))
                 row = await cur.fetchone()
         if not row:
             raise NotFoundError("Ingestion job not found.")

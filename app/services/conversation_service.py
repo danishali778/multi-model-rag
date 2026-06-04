@@ -9,6 +9,7 @@ from app.api.schemas.conversations import (
     MessageListItem,
 )
 from app.domain.entities.rag import Principal
+from app.domain.errors import NotFoundError
 from app.storage.repositories.conversation import ConversationRepository
 
 
@@ -41,6 +42,13 @@ class ConversationService:
         conversation_id: UUID,
         principal: Principal,
     ) -> ConversationDetailResponse:
+        conversation = await self.conversation_repository.get_conversation(
+            workspace_id=workspace_id,
+            conversation_id=conversation_id,
+            user_id=principal.user_id,
+        )
+        if conversation is None:
+            raise NotFoundError("Conversation not found.")
         rows = await self.conversation_repository.list_conversation_messages(
             workspace_id=workspace_id,
             conversation_id=conversation_id,

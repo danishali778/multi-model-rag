@@ -55,8 +55,8 @@ class DocumentRepository:
         source_type: str | None,
         limit: int,
     ) -> list[DocumentListRow]:
-        filters = ["d.workspace_id = %s", "d.deleted_at is null"]
-        params: list[Any] = [workspace_id]
+        filters = ["d.workspace_id = %s", "d.created_by = %s", "d.deleted_at is null"]
+        params: list[Any] = [workspace_id, user_id]
         if status:
             filters.append("d.status = %s")
             params.append(status)
@@ -83,12 +83,12 @@ class DocumentRepository:
                    count(dc.id) filter (where dc.chunk_role = 'child')::int as chunk_count
             from documents d
             left join document_chunks dc on dc.document_id = d.id
-            where d.workspace_id = %s and d.id = %s and d.deleted_at is null
+            where d.workspace_id = %s and d.id = %s and d.created_by = %s and d.deleted_at is null
             group by d.id
         """
         async with self.db.connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute(query, (workspace_id, document_id))
+                await cur.execute(query, (workspace_id, document_id, user_id))
                 row = await cur.fetchone()
         if not row:
             raise NotFoundError("Document not found.")
@@ -99,11 +99,11 @@ class DocumentRepository:
         query = """
             select d.id, d.title, d.source_type, d.sensitivity, d.metadata
             from documents d
-            where d.workspace_id = %s and d.id = %s and d.deleted_at is null
+            where d.workspace_id = %s and d.id = %s and d.created_by = %s and d.deleted_at is null
         """
         async with self.db.connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute(query, (workspace_id, document_id))
+                await cur.execute(query, (workspace_id, document_id, user_id))
                 row = await cur.fetchone()
         if not row:
             raise NotFoundError("Document not found.")

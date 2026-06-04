@@ -8,6 +8,7 @@ from app.storage.db.session import Database
 from app.storage.models.conversation import (
     ConversationCreateInput,
     ConversationMessageRow,
+    ConversationRow,
     ConversationSummaryRow,
     MessageCreateInput,
 )
@@ -57,6 +58,26 @@ class ConversationRepository:
                 )
                 await conn.commit()
         return row["id"]
+
+    async def get_conversation(
+        self,
+        *,
+        workspace_id: UUID,
+        conversation_id: UUID,
+        user_id: UUID,
+    ) -> ConversationRow | None:
+        query = """
+            select id, title, created_at, updated_at
+            from conversations
+            where workspace_id = %s and id = %s and user_id = %s
+        """
+        async with self.db.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, (workspace_id, conversation_id, user_id))
+                row = await cur.fetchone()
+        if row is None:
+            return None
+        return ConversationRow.from_row(row)
 
     async def list_conversations(
         self,
