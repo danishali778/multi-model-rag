@@ -613,7 +613,7 @@ def _build_prose_chunks_legacy(
     next_index += 1
 
     child_parts = [parent_text]
-    if parent_chunk.token_count > chunk_size:
+    if parent_chunk.token_count >= chunk_size:
         child_parts = splitter.split_text(parent_text)
 
     for part in child_parts:
@@ -681,7 +681,7 @@ def _build_prose_chunks_graph(
     next_index += 1
 
     child_parts = [parent_text]
-    if parent_chunk.token_count > chunk_size:
+    if parent_chunk.token_count >= chunk_size:
         child_parts = splitter.split_text(parent_text)
 
     for part in child_parts:
