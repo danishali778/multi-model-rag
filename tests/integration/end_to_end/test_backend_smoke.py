@@ -1,3 +1,5 @@
+import asyncio
+
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
@@ -6,12 +8,20 @@ from app.core.config import settings
 from app.domain.errors import ProviderUnavailableError
 from app.llm.providers.base import ChatCompletion, EmbeddingResult
 from app.main import create_app
+from app.storage.db.session import Database
 
 DOC_PREFIX = "pytest-b2c-doc"
 CHAT_PREFIX = "pytest-b2c-chat"
 
 
+def _ensure_runtime_schema() -> None:
+    if not settings.supabase_db_url:
+        pytest.skip("Integration DB URL is not configured.")
+    asyncio.run(Database(settings).startup())
+
+
 def _cleanup_phase1_artifacts() -> None:
+    _ensure_runtime_schema()
     if not settings.supabase_db_url:
         pytest.skip("Integration DB URL is not configured.")
     try:

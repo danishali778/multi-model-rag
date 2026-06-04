@@ -14,6 +14,7 @@ create table if not exists connector_sync_states (
 
 alter table connector_sync_states enable row level security;
 
+drop policy if exists connector_sync_states_select_policy on connector_sync_states;
 create policy connector_sync_states_select_policy on connector_sync_states
 for select
 using (

@@ -9,6 +9,10 @@ from app.core.config import settings
 from app.core.container import AppContainer
 from app.core.logging import configure_logging
 from app.core.middleware import CorrelationIdMiddleware, RequestSizeLimitMiddleware, TelemetryMiddleware
+from app.core.runtime import configure_asyncio_runtime
+
+
+configure_asyncio_runtime()
 
 
 @asynccontextmanager

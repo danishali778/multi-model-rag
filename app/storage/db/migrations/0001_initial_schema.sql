@@ -1,3 +1,4 @@
+create schema if not exists extensions;
 create extension if not exists vector with schema extensions;
 create extension if not exists pgcrypto;
 
@@ -100,7 +101,7 @@ create index if not exists document_chunks_tenant_document_idx on document_chunk
 create index if not exists document_chunks_metadata_idx on document_chunks using gin (metadata);
 create index if not exists document_chunks_search_vector_idx on document_chunks using gin (search_vector);
 create index if not exists document_chunks_embedding_idx
-on document_chunks using hnsw (embedding vector_cosine_ops);
+on document_chunks using hnsw (embedding extensions.vector_cosine_ops);
 
 create table if not exists ingestion_jobs (
     id uuid primary key default gen_random_uuid(),
