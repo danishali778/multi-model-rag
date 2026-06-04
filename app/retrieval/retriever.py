@@ -119,7 +119,7 @@ class RetrievalService:
         reranker_used = False
         if candidates:
             reranked = await self._reranker.rerank(query_text, list(candidates))
-            reranker_used = reranked is not candidates
+            reranker_used = getattr(self._reranker, "model_name", None) is not None
             candidates = list(reranked)
 
         candidates = _deduplicate_candidates(

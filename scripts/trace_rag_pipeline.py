@@ -253,7 +253,7 @@ async def _trace_retrieval_and_answer(
             merged = _apply_structural_boosts(merged, rewritten_query, query_features=query_features)
 
     reranked = await container.reranker.rerank(rewritten_query, list(merged))
-    reranker_used = reranked is not merged
+    reranker_used = getattr(container.reranker, "model_name", None) is not None
     deduped = _deduplicate_candidates(
         list(reranked),
         container.settings.retrieval_dedup_similarity_threshold,

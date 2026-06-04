@@ -2,10 +2,10 @@
   {
     "question": "What is the remote work policy?",
     "expected_answer": "Remote work is allowed three days per week with manager approval.",
-    "required_document_ids": ["doc-remote-work"],
-    "acceptable_chunk_ids": ["chunk-remote-work-1"],
+    "required_document_ids": ["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"],
+    "acceptable_chunk_ids": ["bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"],
     "difficulty": "easy",
-    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "workspace_id": "11111111-1111-1111-1111-111111111111",
     "user_id": "00000000-0000-0000-0000-000000000001",
     "filters": {
       "department": "hr"

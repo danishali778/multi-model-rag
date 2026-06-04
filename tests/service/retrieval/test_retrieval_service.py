@@ -3,7 +3,8 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from app.core.config import Settings
-from app.domain.entities.rag import RetrievalCandidate
+from app.domain.entities.rag import RetrievalCandidate, RetrievalRequest
+from app.retrieval.reranker import HeuristicLexicalReranker, NoopReranker
 from app.retrieval.retriever import (
     RetrievalService,
     _apply_structural_boosts,
@@ -374,3 +375,107 @@ def test_graph_expansion_adds_parent_and_neighbor_candidates():
     relations = {item.metadata.get("graph_relation") for item in expanded}
     assert "same_node_parent" in relations
     assert "neighbor" in relations
+
+
+class _MinimalRepo:
+    async def search_vector_candidates(self, **kwargs):
+        return [
+            RetrievalCandidateRow(
+                id=uuid4(),
+                document_id=uuid4(),
+                chunk_index=0,
+                content="Remote work policy allows three days per week.",
+                metadata={},
+                title="Handbook",
+                sensitivity="internal",
+                vector_score=0.9,
+            )
+        ]
+
+    async def search_fts_candidates(self, **kwargs):
+        return []
+
+    async def diagnose_empty_retrieval(self, **kwargs):
+        return "no_sources"
+
+    async def get_parent_context_chunks(self, parent_ids):
+        return {}
+
+
+class _EmbeddingRouter:
+    async def embed_texts(self, texts):
+        return SimpleNamespace(vectors=[[0.01] * 4])
+
+
+def test_retrieve_marks_reranker_unused_for_noop():
+    service = RetrievalService(
+        retrieval_repository=_MinimalRepo(),
+        model_router=_EmbeddingRouter(),
+        reranker=NoopReranker(),
+        settings=SimpleNamespace(
+            retrieval_vector_candidate_count=4,
+            retrieval_fts_candidate_count=4,
+            retrieval_fusion_rank_constant=60,
+            retrieval_vector_weight=1.0,
+            retrieval_fts_weight=0.85,
+            retrieval_dedup_similarity_threshold=0.92,
+            retrieval_low_score_threshold=0.018,
+            retrieval_low_diversity_threshold=2,
+            retrieval_config_version="hybrid-v1",
+            max_context_chunks=8,
+            retrieval_max_chunks_per_document=2,
+            retrieval_context_token_budget=2200,
+        ),
+    )
+
+    decision = asyncio.run(
+        service.retrieve(
+            RetrievalRequest(
+                workspace_id=uuid4(),
+                user_id=uuid4(),
+                question="What is the remote work policy?",
+                filters={},
+                requested_top_k=4,
+                model_profile="balanced",
+            )
+        )
+    )
+
+    assert decision.reranker_used is False
+
+
+def test_retrieve_marks_reranker_used_for_heuristic_reranker():
+    service = RetrievalService(
+        retrieval_repository=_MinimalRepo(),
+        model_router=_EmbeddingRouter(),
+        reranker=HeuristicLexicalReranker(SimpleNamespace(reranker_model_name="heuristic-lexical-v1")),
+        settings=SimpleNamespace(
+            retrieval_vector_candidate_count=4,
+            retrieval_fts_candidate_count=4,
+            retrieval_fusion_rank_constant=60,
+            retrieval_vector_weight=1.0,
+            retrieval_fts_weight=0.85,
+            retrieval_dedup_similarity_threshold=0.92,
+            retrieval_low_score_threshold=0.018,
+            retrieval_low_diversity_threshold=2,
+            retrieval_config_version="hybrid-v1",
+            max_context_chunks=8,
+            retrieval_max_chunks_per_document=2,
+            retrieval_context_token_budget=2200,
+        ),
+    )
+
+    decision = asyncio.run(
+        service.retrieve(
+            RetrievalRequest(
+                workspace_id=uuid4(),
+                user_id=uuid4(),
+                question="What is the remote work policy?",
+                filters={},
+                requested_top_k=4,
+                model_profile="balanced",
+            )
+        )
+    )
+
+    assert decision.reranker_used is True

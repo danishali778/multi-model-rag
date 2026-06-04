@@ -14,7 +14,15 @@ def test_evaluation_runner_returns_metrics():
     repo = GoldenDatasetRepository("tests/evaluation/datasets/golden_dataset.json")
     items = repo.load()
     runner = EvaluationRunner()
-    result = runner.run_retrieval_evaluation(items)
+    result = runner.run_retrieval_evaluation(
+        items,
+        [
+            PredictionSample(
+                document_ids=["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"],
+                source_texts=["Remote work is allowed three days per week with manager approval."],
+            )
+        ],
+    )
     assert result.metrics["unauthorized_source_rate"] == 0.0
     assert result.metrics["recall_at_5"] == 1.0
 

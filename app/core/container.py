@@ -13,7 +13,7 @@ from app.llm.providers.openai import (
 )
 from app.llm.router import ModelRouter
 from app.retrieval.audio_retriever import AudioRetrievalService
-from app.retrieval.reranker import CrossEncoderReranker, NoopReranker
+from app.retrieval.reranker import HeuristicLexicalReranker, NoopReranker
 from app.retrieval.retriever import RetrievalService
 from app.security.auth import AuthService
 from app.security.policy import SecurityPolicyService
@@ -23,6 +23,7 @@ from app.services.auth_service import SupabaseAuthBrokerService
 from app.services.chat_service import ChatService
 from app.services.conversation_service import ConversationService
 from app.services.document_service import DocumentService
+from app.services.evaluation_service import EvaluationService
 from app.services.feedback_service import FeedbackService
 from app.services.health_service import HealthService
 from app.services.ingestion_service import IngestionService
@@ -35,6 +36,7 @@ from app.storage.repositories.audio import AudioRepository
 from app.storage.repositories.audit import AuditRepository
 from app.storage.repositories.conversation import ConversationRepository
 from app.storage.repositories.document import DocumentRepository
+from app.storage.repositories.evaluation import EvaluationRepository
 from app.storage.repositories.feedback import FeedbackRepository
 from app.storage.repositories.ingestion import IngestionRepository
 from app.storage.repositories.retrieval import RetrievalRepository
@@ -56,6 +58,7 @@ class AppContainer:
         self.audio_repository = AudioRepository(self.db, settings)
         self.feedback_repository = FeedbackRepository(self.db, settings)
         self.audit_repository = AuditRepository(self.db, settings)
+        self.evaluation_repository = EvaluationRepository(self.db, settings)
         self.storage = StorageClient(settings)
         self.voice_media_service = VoiceMediaService(storage=self.storage, settings=settings)
         self.task_runner = IngestionTaskRunner(settings)
@@ -85,7 +88,7 @@ class AppContainer:
             telemetry=self.telemetry,
         )
         self.parser_registry = ParserRegistry(model_router=self.model_router)
-        self.reranker = CrossEncoderReranker(settings) if settings.reranker_enabled else NoopReranker()
+        self.reranker = HeuristicLexicalReranker(settings) if settings.reranker_enabled else NoopReranker()
         self.retrieval_service = RetrievalService(
             retrieval_repository=self.retrieval_repository,
             model_router=self.model_router,
@@ -144,6 +147,11 @@ class AppContainer:
         )
         self.feedback_service = FeedbackService(self.feedback_repository, self.audit_repository, self.telemetry)
         self.conversation_service = ConversationService(self.conversation_repository)
+        self.evaluation_service = EvaluationService(
+            repository=self.evaluation_repository,
+            retrieval_service=self.retrieval_service,
+            settings=settings,
+        )
         self.health_service = HealthService(
             database=self.db,
             model_router=self.model_router,

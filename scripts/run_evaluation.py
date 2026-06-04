@@ -10,7 +10,7 @@ from app.core.container import AppContainer
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Run a retrieval evaluation and persist the result.")
-    parser.add_argument("--tenant-id", required=True)
+    parser.add_argument("--workspace-id", required=True)
     parser.add_argument("--model-profile", default="balanced")
     args = parser.parse_args()
 
@@ -18,7 +18,7 @@ async def main() -> None:
     await container.startup()
     try:
         run_id = await container.evaluation_service.run_retrieval_evaluation(
-            tenant_id=UUID(args.tenant_id),
+            workspace_id=UUID(args.workspace_id),
             model_profile=args.model_profile,
         )
         print(run_id)
