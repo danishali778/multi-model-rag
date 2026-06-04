@@ -3,8 +3,10 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import jwt
+import pytest
 
 from app.core.config import Settings
+from app.domain.errors import UnauthorizedError
 from app.security.auth import AuthService
 
 
@@ -56,3 +58,49 @@ def test_jwt_authentication():
     assert principal.auth_method == "jwt"
     assert str(principal.user_id) == user_id
     assert principal.email == "jwt@example.com"
+
+
+@pytest.mark.parametrize(
+    ("claims", "secret", "expected_message"),
+    [
+        ({"sub": str(uuid4()), "email": "jwt@example.com", "aud": "wrong"}, "jwt-secret-key-with-at-least-thirty-two-bytes", "Invalid JWT."),
+        ({"email": "jwt@example.com", "aud": "authenticated"}, "jwt-secret-key-with-at-least-thirty-two-bytes", "JWT is missing the subject claim."),
+        ({"sub": "not-a-uuid", "email": "jwt@example.com", "aud": "authenticated"}, "jwt-secret-key-with-at-least-thirty-two-bytes", "JWT subject is not a valid UUID."),
+    ],
+)
+def test_jwt_authentication_rejects_invalid_claims(claims, secret, expected_message):
+    settings = Settings(
+        _env_file=None,
+        supabase_jwks_url="https://example.com/jwks",
+        supabase_jwt_algorithm="HS256",
+        supabase_jwt_audience="authenticated",
+    )
+    service = AuthService(settings)
+    service.__dict__["jwk_client"] = SimpleNamespace(
+        get_signing_key_from_jwt=lambda token: SimpleNamespace(key=secret)
+    )
+    token = jwt.encode(claims, secret, algorithm="HS256")
+
+    with pytest.raises(UnauthorizedError, match=expected_message):
+        asyncio.run(service.authenticate(f"Bearer {token}", None))
+
+
+def test_jwt_authentication_rejects_invalid_signature():
+    settings = Settings(
+        _env_file=None,
+        supabase_jwks_url="https://example.com/jwks",
+        supabase_jwt_algorithm="HS256",
+        supabase_jwt_audience="authenticated",
+    )
+    service = AuthService(settings)
+    service.__dict__["jwk_client"] = SimpleNamespace(
+        get_signing_key_from_jwt=lambda token: SimpleNamespace(key="jwt-secret-key-with-at-least-thirty-two-bytes")
+    )
+    token = jwt.encode(
+        {"sub": str(uuid4()), "email": "jwt@example.com", "aud": "authenticated"},
+        "different-secret-key-with-at-least-thirty-two-bytes",
+        algorithm="HS256",
+    )
+
+    with pytest.raises(UnauthorizedError, match="Invalid JWT."):
+        asyncio.run(service.authenticate(f"Bearer {token}", None))

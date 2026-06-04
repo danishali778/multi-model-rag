@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+from typing import Literal
 from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 
+ChatProfile = Literal["fast", "balanced", "reasoning", "local"]
+
+
 class ChatRequest(BaseModel):
     query: str = Field(min_length=1)
     conversation_id: UUID | None = None
-    profile: str | None = None
+    profile: ChatProfile | None = None
     document_ids: list[UUID] | None = None
     metadata: dict[str, Any] | None = None
 
