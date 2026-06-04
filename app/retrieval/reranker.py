@@ -27,7 +27,9 @@ class NoopReranker(BaseReranker):
         return candidates
 
 
-class CrossEncoderReranker(BaseReranker):
+class HeuristicLexicalReranker(BaseReranker):
+    """Lightweight lexical reranker used as a heuristic relevance boost."""
+
     def __init__(self, settings: Settings):
         self.settings = settings
 
@@ -48,6 +50,10 @@ class CrossEncoderReranker(BaseReranker):
             ranked.append((candidate.fused_score, candidate))
         ranked.sort(key=lambda item: item[0], reverse=True)
         return [item[1] for item in ranked]
+
+
+class CrossEncoderReranker(HeuristicLexicalReranker):
+    """Backward-compatible alias for the legacy reranker name."""
 
 
 def _terms(text: str) -> list[str]:
