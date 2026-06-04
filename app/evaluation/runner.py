@@ -17,9 +17,8 @@ class EvaluationRunner:
     def run_retrieval_evaluation(
         self,
         dataset: list[EvaluationDatasetItem],
-        predictions: list[PredictionSample] | None = None,
+        predictions: list[PredictionSample],
     ) -> EvaluationResult:
-        predictions = predictions or [PredictionSample(document_ids=item.required_document_ids, source_texts=[]) for item in dataset]
         predicted_ids = [sample.document_ids for sample in predictions]
         metrics = {
             "recall_at_5": EvaluationMetrics.recall_at_k(dataset, predicted_ids, 5),
