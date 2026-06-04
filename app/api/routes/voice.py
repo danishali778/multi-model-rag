@@ -33,6 +33,12 @@ async def answer_voice_question(
         audio_upload_path=audio_upload_path,
         mime_type=audio_file.content_type if audio_file else mime_type,
     )
+    await context.container.rate_limiter.check_request(
+        principal=context.principal,
+        workspace_id=str(context.workspace_id),
+        route_key="/v1/voice/chat",
+        profile=payload.profile or "balanced",
+    )
     raw_bytes = await audio_file.read() if audio_file else None
     filename = audio_file.filename if audio_file else None
     return await context.container.voice_chat_service.answer_voice_turn(

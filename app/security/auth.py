@@ -3,7 +3,7 @@ from typing import Any
 from uuid import UUID
 
 import jwt
-from jwt import PyJWKClient
+from jwt import InvalidTokenError, PyJWKClient, PyJWKClientError
 
 from app.core.config import Settings
 from app.domain.entities.rag import Principal
@@ -37,18 +37,25 @@ class AuthService:
     def _authenticate_jwt(self, token: str) -> Principal:
         if not self.jwk_client:
             raise UnauthorizedError("JWT authentication is not configured.")
-        signing_key = self.jwk_client.get_signing_key_from_jwt(token)
-        claims = jwt.decode(
-            token,
-            signing_key.key,
-            algorithms=[self.settings.supabase_jwt_algorithm],
-            audience=self.settings.supabase_jwt_audience,
-        )
+        try:
+            signing_key = self.jwk_client.get_signing_key_from_jwt(token)
+            claims = jwt.decode(
+                token,
+                signing_key.key,
+                algorithms=[self.settings.supabase_jwt_algorithm],
+                audience=self.settings.supabase_jwt_audience,
+            )
+        except (InvalidTokenError, PyJWKClientError) as exc:
+            raise UnauthorizedError("Invalid JWT.") from exc
         subject = claims.get("sub")
         if not subject:
             raise UnauthorizedError("JWT is missing the subject claim.")
+        try:
+            user_id = UUID(subject)
+        except ValueError as exc:
+            raise UnauthorizedError("JWT subject is not a valid UUID.") from exc
         return Principal(
-            user_id=UUID(subject),
+            user_id=user_id,
             email=claims.get("email"),
             auth_method="jwt",
             role=claims.get("role"),

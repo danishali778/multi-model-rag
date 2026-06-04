@@ -137,17 +137,12 @@ class ChatService:
                 )
             )
         else:
-            await self._conversation_repository.list_conversation_messages(
+            conversation = await self._conversation_repository.get_conversation(
                 workspace_id=workspace_id,
                 conversation_id=conversation_id,
                 user_id=principal.user_id,
             )
-            conversation_rows = await self._conversation_repository.list_conversations(
-                workspace_id=workspace_id,
-                user_id=principal.user_id,
-                limit=100,
-            )
-            if not any(row.id == conversation_id for row in conversation_rows):
+            if conversation is None:
                 raise NotFoundError("Conversation not found.")
 
         user_message_id = await self._conversation_repository.create_message(

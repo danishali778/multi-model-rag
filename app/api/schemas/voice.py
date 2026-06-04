@@ -5,12 +5,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.api.schemas.chat import SourceResponse, UsageResponse
+from app.api.schemas.chat import ChatProfile, SourceResponse, UsageResponse
 
 
 class VoiceChatRequest(BaseModel):
     conversation_id: UUID | None = None
-    profile: str | None = None
+    profile: ChatProfile | None = None
     document_ids: list[UUID] | None = None
     metadata: dict[str, Any] | None = None
     audio_upload_bucket: str | None = None

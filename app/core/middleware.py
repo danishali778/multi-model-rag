@@ -1,10 +1,12 @@
 from uuid import uuid4
 
 import structlog
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
+from app.api.schemas.common import ErrorBody, ErrorResponse
 from app.core.telemetry import Timer
 from app.domain.errors import BadRequestError
 
@@ -28,10 +30,23 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         content_length = request.headers.get("content-length")
         if content_length and int(content_length) > self.max_body_bytes:
-            raise BadRequestError(
+            error = BadRequestError(
                 "Request body is too large.",
                 details={"max_body_bytes": self.max_body_bytes},
             )
+            correlation_id = request.headers.get("X-Correlation-ID")
+            body = ErrorResponse(
+                error=ErrorBody(
+                    code=error.code,
+                    message=error.message,
+                    details=error.details,
+                    correlation_id=correlation_id,
+                )
+            )
+            response = JSONResponse(status_code=error.status_code, content=body.model_dump())
+            if correlation_id:
+                response.headers["X-Correlation-ID"] = correlation_id
+            return response
         return await call_next(request)
 
 

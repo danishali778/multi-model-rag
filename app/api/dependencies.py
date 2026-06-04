@@ -6,6 +6,8 @@ from fastapi import Depends, Header, Request
 from app.core.container import AppContainer
 from app.domain.entities.rag import Principal
 
+PROFILE_AWARE_RATE_LIMIT_ROUTES = frozenset({"/v1/chat", "/v1/voice/chat"})
+
 
 def get_container(request: Request) -> AppContainer:
     return request.app.state.container
@@ -18,11 +20,12 @@ async def get_current_principal(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> Principal:
     principal = await container.auth_service.authenticate(authorization=authorization, x_api_key=x_api_key)
-    await container.rate_limiter.check_request(
-        principal=principal,
-        workspace_id=None,
-        route_key=request.url.path,
-    )
+    if request.url.path not in PROFILE_AWARE_RATE_LIMIT_ROUTES:
+        await container.rate_limiter.check_request(
+            principal=principal,
+            workspace_id=None,
+            route_key=request.url.path,
+        )
     return principal
 
 
@@ -39,9 +42,10 @@ async def get_workspace_context(
     container: AppContainer = Depends(get_container),
 ) -> WorkspaceContext:
     workspace_id = await container.personal_workspace_service.resolve_workspace_for_principal(principal)
-    await container.rate_limiter.check_request(
-        principal=principal,
-        workspace_id=str(workspace_id),
-        route_key=request.url.path,
-    )
+    if request.url.path not in PROFILE_AWARE_RATE_LIMIT_ROUTES:
+        await container.rate_limiter.check_request(
+            principal=principal,
+            workspace_id=str(workspace_id),
+            route_key=request.url.path,
+        )
     return WorkspaceContext(container=container, principal=principal, workspace_id=workspace_id)

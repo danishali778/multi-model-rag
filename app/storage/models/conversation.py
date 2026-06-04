@@ -40,6 +40,18 @@ class ConversationSummaryRow:
 
 
 @dataclass(slots=True)
+class ConversationRow:
+    id: UUID
+    title: str
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_row(cls, row: dict) -> "ConversationRow":
+        return cls(**row)
+
+
+@dataclass(slots=True)
 class ConversationMessageRow:
     id: UUID
     role: str

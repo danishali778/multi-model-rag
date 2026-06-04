@@ -1,6 +1,8 @@
 import asyncio
 from types import SimpleNamespace
+from uuid import uuid4
 
+import jwt
 import pytest
 from pydantic import ValidationError
 
@@ -15,6 +17,7 @@ from app.api.schemas.auth import (
     UpdatePasswordRequest,
 )
 from app.domain.errors import UnauthorizedError
+from tests.helpers.app_factory import build_test_client
 
 
 def test_sign_in_returns_session_and_provisions_workspace():
@@ -73,3 +76,28 @@ def test_sign_out_accepts_optional_bearer_token():
     )
 
     assert response.message == "Signed out."
+
+
+def test_protected_route_rejects_invalid_bearer_token_with_401():
+    secret = "jwt-secret-key-with-at-least-thirty-two-bytes"
+    token = jwt.encode(
+        {"sub": str(uuid4()), "email": "jwt@example.com", "aud": "wrong"},
+        secret,
+        algorithm="HS256",
+    )
+
+    with build_test_client() as client:
+        container = client.app.state.container
+        container.auth_service.settings.supabase_jwt_algorithm = "HS256"
+        container.auth_service.settings.supabase_jwt_audience = "authenticated"
+        container.auth_service.__dict__["jwk_client"] = SimpleNamespace(
+            get_signing_key_from_jwt=lambda raw_token: SimpleNamespace(key=secret)
+        )
+
+        response = client.get(
+            "/v1/documents",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthorized"
