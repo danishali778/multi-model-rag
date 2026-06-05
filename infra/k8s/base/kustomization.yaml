@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - api-deployment.yaml
+  - api-service.yaml
+  - worker-deployment.yaml
+  - ingress.yaml
+  - api-hpa.yaml
+  - worker-hpa.yaml
+  - api-pdb.yaml
+  - worker-pdb.yaml
+
+configMapGenerator:
+  - name: multi-model-rag-config
+    envs:
+      - config/app-config.env
+
+secretGenerator:
+  - name: multi-model-rag-secrets
+    envs:
+      - secrets/app-secrets.env
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+labels:
+  - pairs:
+      app.kubernetes.io/name: multi-model-rag
+      app.kubernetes.io/part-of: multi-model-rag
