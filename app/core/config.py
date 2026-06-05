@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import os
 
-from pydantic import AliasChoices, AnyHttpUrl, Field
+from pydantic import AliasChoices, AnyHttpUrl, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,6 +13,7 @@ class Settings(BaseSettings):
     app_name: str = "multi-model-rag"
     environment: str = "development"
     log_level: str = "INFO"
+    runtime_role: str = "api"
     allow_dev_api_key: bool = Field(default=True, validation_alias=AliasChoices("ALLOW_DEV_API_KEY"))
     internal_service_token: str | None = Field(default=None, validation_alias=AliasChoices("INTERNAL_SERVICE_TOKEN"))
 
@@ -183,6 +185,8 @@ class Settings(BaseSettings):
     rate_limit_chat_requests_per_window: int = 30
     rate_limit_reasoning_requests_per_window: int = 10
     telemetry_service_name: str = "multi-model-rag-api"
+    worker_metrics_enabled: bool = True
+    worker_metrics_port: int = 9100
     tracing_enabled: bool = False
     tracing_exporter_otlp_endpoint: AnyHttpUrl | None = Field(
         default=None,
@@ -201,6 +205,14 @@ class Settings(BaseSettings):
     evaluation_max_regression_pct: float = 0.05
     evaluation_latency_threshold_ms: int = 6_000
     evaluation_cost_threshold_usd: float = 2.50
+
+    @model_validator(mode="after")
+    def normalize_blank_aliases(self) -> "Settings":
+        if not self.hf_api_token:
+            fallback = os.getenv("HUGGINGFACE_API_KEY")
+            if fallback:
+                self.hf_api_token = fallback
+        return self
 
     def database_configured(self) -> bool:
         return bool(self.supabase_db_url)
@@ -236,6 +248,10 @@ class Settings(BaseSettings):
             raise ValueError("REQUEST_TIMEOUT_SECONDS must be greater than zero.")
         if self.tracing_enabled and not self.tracing_exporter_otlp_endpoint:
             raise ValueError("TRACING_EXPORTER_OTLP_ENDPOINT is required when tracing is enabled.")
+        if self.runtime_role not in {"api", "worker"}:
+            raise ValueError("RUNTIME_ROLE must be one of: api, worker.")
+        if self.worker_metrics_port < 1:
+            raise ValueError("WORKER_METRICS_PORT must be greater than zero.")
 
     def validate_model_gateway(self) -> None:
         active_providers = {target.provider for target in self.iter_active_targets()}
