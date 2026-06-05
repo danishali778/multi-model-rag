@@ -1,0 +1,37 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+namespace: multi-model-rag-dev
+nameSuffix: -dev
+
+configMapGenerator:
+  - name: multi-model-rag-config
+    behavior: merge
+    envs:
+      - config/app-config.env
+
+secretGenerator:
+  - name: multi-model-rag-secrets
+    behavior: replace
+    envs:
+      - secrets/app-secrets.env
+
+images:
+  - name: ghcr.io/danishali778/multi-model-rag-api
+    newName: ghcr.io/danishali778/multi-model-rag-api
+    newTag: dev
+  - name: ghcr.io/danishali778/multi-model-rag-worker
+    newName: ghcr.io/danishali778/multi-model-rag-worker
+    newTag: dev
+
+patches:
+  - target:
+      kind: Ingress
+      name: multi-model-rag-api
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: api-dev.example.com

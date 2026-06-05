@@ -1,18 +1,96 @@
 services:
   api:
-    build: .
-    env_file: .env
+    build:
+      context: .
+      target: api-runtime
+    command: ["sh", "/app/infra/docker/api-start.sh"]
+    env_file:
+      - ${APP_ENV_FILE:-.env.compose}
+    environment:
+      RUNTIME_ROLE: api
+      TELEMETRY_SERVICE_NAME: multi-model-rag-api
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8000:8000"
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
     volumes:
       - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck_api.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      target: worker-runtime
+    command: ["sh", "/app/infra/docker/worker-start.sh"]
+    env_file:
+      - ${APP_ENV_FILE:-.env.compose}
+    environment:
+      RUNTIME_ROLE: worker
+      TELEMETRY_SERVICE_NAME: multi-model-rag-worker
+      WORKER_METRICS_PORT: "9100"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck_worker.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.66.0
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "9121:9121"
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.103.1
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./infra/otel/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "13133:13133"
+    restart: unless-stopped
 
   prometheus:
     image: prom/prometheus:v2.55.1
@@ -20,3 +98,28 @@ services:
       - "9090:9090"
     volumes:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      worker:
+        condition: service_started
+      redis-exporter:
+        condition: service_started
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.1.4
+    ports:
+      - "3001:3000"
+    depends_on:
+      prometheus:
+        condition: service_started
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    restart: unless-stopped
+
+volumes:
+  grafana-data:
+  redis-data:

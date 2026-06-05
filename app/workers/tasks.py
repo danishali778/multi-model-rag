@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import asdict
 from typing import Any
 
 from celery import Celery
+from prometheus_client import start_http_server
 
 from app.core.config import Settings, get_settings
 from app.domain.entities.rag import IngestionTaskPayload
@@ -28,6 +30,22 @@ def build_celery_app(settings: Settings | None = None) -> Celery:
 
 
 celery_app = build_celery_app()
+_WORKER_METRICS_STARTED = False
+
+
+def _start_worker_metrics_server(settings: Settings) -> None:
+    global _WORKER_METRICS_STARTED
+    if _WORKER_METRICS_STARTED:
+        return
+    if settings.runtime_role != "worker" or not settings.worker_metrics_enabled:
+        return
+    if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        return
+    start_http_server(settings.worker_metrics_port)
+    _WORKER_METRICS_STARTED = True
+
+
+_start_worker_metrics_server(get_settings())
 
 
 class IngestionTaskRunner:

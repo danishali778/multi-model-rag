@@ -55,11 +55,13 @@ from app.core.config import Settings
 
 try:
     from opentelemetry import trace
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 except ImportError:  # pragma: no cover - handled at runtime after deps install
     trace = None
+    OTLPSpanExporter = None
     Resource = None
     TracerProvider = None
     BatchSpanProcessor = None
@@ -139,9 +141,20 @@ class Telemetry:
             return
         resource = Resource.create({"service.name": self.settings.telemetry_service_name})
         provider = TracerProvider(resource=resource)
-        provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+        exporter = self._build_trace_exporter()
+        provider.add_span_processor(BatchSpanProcessor(exporter))
         trace.set_tracer_provider(provider)
         self._provider_initialized = True
+
+    def _build_trace_exporter(self):
+        endpoint = self.settings.tracing_exporter_otlp_endpoint
+        if endpoint and OTLPSpanExporter is not None:
+            endpoint_text = str(endpoint)
+            return OTLPSpanExporter(
+                endpoint=endpoint_text,
+                insecure=endpoint_text.startswith("http://"),
+            )
+        return ConsoleSpanExporter()
 
     def tracer(self, name: str):
         if trace is None:
