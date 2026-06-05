@@ -240,7 +240,7 @@ The backend expects:
 
 - PostgreSQL with pgvector
 - Redis for rate limiting and Celery-backed async work
-- Supabase Storage-compatible buckets for raw and processed artifacts
+- Supabase Auth and Storage-compatible services for identity and object artifacts
 
 The SQL migration files live in:
 
@@ -256,29 +256,42 @@ Important notes:
 ### Requirements
 
 - Python `3.11+`
-- PostgreSQL with pgvector
-- Redis
-- Supabase-compatible storage configuration
+- Docker Desktop
 - at least one working chat provider and one embedding provider
 
 Optional but useful:
 
-- Docker Desktop
 - Prometheus
+- Supabase CLI for the optional local-Supabase flow
 - Ollama for local profile testing
 
 ### Environment setup
 
-Copy the example environment file:
+Choose the env template that matches how you want to run the backend.
 
 ```bash
 cp .env.example .env
+cp .env.compose.example .env.compose
 ```
+
+Use:
+
+- `.env.example`
+  - app runs on your host machine against your remote Supabase project
+- `.env.compose.example`
+  - app runs in Docker Compose against your remote Supabase project
+- `.env.host.local-supabase.example`
+  - optional host-run app flow against `supabase start`
+- `.env.compose.local-supabase.example`
+  - optional Docker Compose flow against `supabase start`
+- `.env.production.app.example`
+  - contract for Kubernetes or other production container deployments
 
 Important variables you will usually need to set:
 
 - `SUPABASE_DB_URL`
 - `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `REDIS_URL`
 - one or more provider API keys such as `GROQ_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `HF_API_TOKEN`
@@ -294,18 +307,30 @@ Key environment groups:
 - security/rate-limit settings
 - observability settings
 
-See [.env.example](.env.example) and [app/core/config.py](app/core/config.py) for the full list.
+See [.env.example](.env.example), [.env.compose.example](.env.compose.example), [.env.host.local-supabase.example](.env.host.local-supabase.example), [.env.compose.local-supabase.example](.env.compose.local-supabase.example), [.env.production.app.example](.env.production.app.example), and [app/core/config.py](app/core/config.py) for the full list.
 
 ### Run with Docker Compose
 
-The included Compose file starts:
+The default Docker path keeps DB/Auth/Storage remote and only runs the app tier plus local support services:
 
 - the API
+- the Celery worker
 - Redis
+- Redis exporter
+- OpenTelemetry collector
 - Prometheus
+- Grafana
 
 ```bash
-docker compose up --build
+cp .env.compose.example .env.compose
+./scripts/bootstrap_compose_remote.sh
+```
+
+PowerShell:
+
+```powershell
+Copy-Item .env.compose.example .env.compose
+.\scripts\bootstrap_compose_remote.ps1
 ```
 
 Open:
@@ -315,8 +340,41 @@ Open:
 - readiness: `http://localhost:8000/ready`
 - metrics: `http://localhost:8000/metrics`
 - Prometheus: `http://localhost:9090`
+- Grafana: `http://localhost:3001`
 
-Important: the compose file does not currently provision Postgres/pgvector for you. You still need a reachable database configured through `SUPABASE_DB_URL`.
+The default bootstrap script:
+
+1. validates `.env.compose`
+2. validates the Compose configuration
+3. starts the app-side Compose services
+4. waits for readiness
+5. verifies database bootstrap and migration state against the remote Supabase project
+
+### Optional local Supabase mode
+
+Use this mode only if you want a self-contained local DB/Auth/Storage stack.
+
+Unix-like shells:
+
+```bash
+python scripts/generate_local_supabase_env.py compose .env.compose.local-supabase
+./scripts/bootstrap_local_supabase_stack.sh
+```
+
+PowerShell:
+
+```powershell
+python scripts/generate_local_supabase_env.py compose .env.compose.local-supabase
+.\scripts\bootstrap_local_supabase_stack.ps1
+```
+
+This optional path:
+
+1. starts `supabase start`
+2. generates a local-Supabase-targeted env file
+3. bootstraps required storage buckets
+4. starts the same app-side Compose services
+5. verifies readiness and migration state
 
 ### Run locally without Docker
 
@@ -338,20 +396,18 @@ pip install -e ".[dev]"
 uvicorn app.main:app --reload
 ```
 
-### Local pgvector database example
+For host-run development, use `.env` with your remote Supabase values.
 
-If you want a disposable local pgvector database for development or tests, a simple Docker option is:
+### Optional host + local Supabase example
+
+If you want to run the backend directly on your host against `supabase start` instead of a remote project:
 
 ```bash
-docker run -d --name mmrag-pg \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=postgres \
-  -p 54329:5432 \
-  pgvector/pgvector:pg17
+supabase start
+python scripts/generate_local_supabase_env.py host .env.host.local-supabase
+source .venv/bin/activate
+uvicorn app.main:app --reload
 ```
-
-Then point `SUPABASE_DB_URL` at that instance.
 
 ## Authentication Model
 
@@ -426,11 +482,15 @@ python scripts/run_evaluation.py --workspace-id 11111111-1111-1111-1111-11111111
 
 ## Background execution model
 
-The project uses Celery + Redis for background-capable ingestion flows, but local development is configured to be simpler by default:
+The project uses Celery + Redis for background-capable ingestion flows.
 
-- `CELERY_TASK_ALWAYS_EAGER=true` in `.env.example`
+Production-shaped local container runs use:
 
-That means many ingestion flows can run synchronously during development unless you explicitly configure a broker/backend for full async behavior.
+- dedicated `api` and `worker` services
+- `CELERY_TASK_ALWAYS_EAGER=false`
+- a slim API image target and a heavier worker image target built from the same Dockerfile
+
+Host-only development can still choose eager execution by adjusting env values when needed.
 
 ## Testing
 
@@ -485,6 +545,16 @@ Notable scripts:
 - chat streaming is not currently exposed in the public API
 - video ingestion/retrieval is not currently implemented
 - usage export and admin reporting are not the main product focus
+
+## Container Platform Assets
+
+Container and deployment assets now live under `infra/`:
+
+- [infra/CONTAINER_PLATFORM.md](infra/CONTAINER_PLATFORM.md)
+- [infra/prometheus](infra/prometheus)
+- [infra/grafana](infra/grafana)
+- [infra/otel](infra/otel)
+- [infra/k8s](infra/k8s)
 
 
 ## Summary
