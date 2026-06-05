@@ -1,0 +1,1 @@
+-- Intentionally minimal. Local bucket/bootstrap setup is handled by scripts/bootstrap_supabase_storage.py.

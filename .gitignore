@@ -1,6 +1,10 @@
 .env
 .env.*
 !.env.example
+!.env.compose.example
+!.env.host.local-supabase.example
+!.env.compose.local-supabase.example
+!.env.production.app.example
 
 .venv
 .venv.noexec
@@ -13,6 +17,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.tmp/
 
 multi_model_rag.egg-info/
 build/
@@ -24,6 +29,7 @@ handoff/
 data/
 
 *.log
+=1.8.0
 
 .DS_Store
 Thumbs.db
