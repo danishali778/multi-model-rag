@@ -26,12 +26,14 @@ if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
 Invoke-Step @("python", "scripts/run_supabase_cli.py", "start", "--ignore-health-check")
 Invoke-Step @("python", "scripts/generate_local_supabase_env.py", "compose", ".env.compose.local-supabase")
 Invoke-Step @("python", "scripts/validate_runtime_env.py", ".env.compose.local-supabase", "local-supabase-compose")
-$composeEnv = Get-Content .env.compose.local-supabase | Where-Object { $_ -match "=" } | ForEach-Object {
+$null = New-Item -ItemType Directory -Force -Path .tmp
+Invoke-Step @("python", "scripts/generate_local_supabase_env.py", "host", ".tmp/.env.host.local-supabase-bootstrap")
+$hostBootstrapEnv = Get-Content .tmp/.env.host.local-supabase-bootstrap | Where-Object { $_ -match "=" } | ForEach-Object {
     $parts = $_ -split "=", 2
     [pscustomobject]@{ Key = $parts[0]; Value = $parts[1] }
 }
-$supabaseUrl = ($composeEnv | Where-Object Key -eq "SUPABASE_URL").Value
-$serviceRoleKey = ($composeEnv | Where-Object Key -eq "SUPABASE_SERVICE_ROLE_KEY").Value
+$supabaseUrl = ($hostBootstrapEnv | Where-Object Key -eq "SUPABASE_URL").Value
+$serviceRoleKey = ($hostBootstrapEnv | Where-Object Key -eq "SUPABASE_SERVICE_ROLE_KEY").Value
 Invoke-Step @("python", "scripts/bootstrap_supabase_storage.py", $supabaseUrl, $serviceRoleKey, "raw-documents,processed-documents,voice-artifacts")
 Invoke-Step @("python", "scripts/run_docker_compose.py", "--env-file", ".env.compose.local-supabase", "up", "--build", "-d", "redis", "redis-exporter", "otel-collector", "prometheus", "grafana", "worker", "api")
 Invoke-Step @("python", "scripts/wait_for_http.py", "http://localhost:8000/ready", "120")

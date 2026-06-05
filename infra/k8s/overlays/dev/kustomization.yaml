@@ -20,8 +20,11 @@ secretGenerator:
       - secrets/app-secrets.env
 
 images:
-  - name: ghcr.io/danishali778/multi-model-rag
-    newName: ghcr.io/danishali778/multi-model-rag
+  - name: ghcr.io/danishali778/multi-model-rag-api
+    newName: ghcr.io/danishali778/multi-model-rag-api
+    newTag: dev
+  - name: ghcr.io/danishali778/multi-model-rag-worker
+    newName: ghcr.io/danishali778/multi-model-rag-worker
     newTag: dev
 
 patches:

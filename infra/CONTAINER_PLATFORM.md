@@ -64,6 +64,11 @@ The API and worker share one codebase but build different targets:
 - `worker-runtime`
   - installs core runtime dependencies plus ingestion extras such as `docling`
 
+Kubernetes should publish and deploy these as separate image artifacts, for example:
+
+- `ghcr.io/danishali778/multi-model-rag-api:<tag>`
+- `ghcr.io/danishali778/multi-model-rag-worker:<tag>`
+
 This split keeps ordinary API rebuilds lighter while preserving heavy parser support in the worker.
 
 Both containers still use the same environment contract and differ mainly by:

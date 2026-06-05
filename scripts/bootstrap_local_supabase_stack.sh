@@ -16,9 +16,11 @@ command -v python >/dev/null 2>&1 || {
 python scripts/run_supabase_cli.py start --ignore-health-check
 python scripts/generate_local_supabase_env.py compose .env.compose.local-supabase
 python scripts/validate_runtime_env.py .env.compose.local-supabase local-supabase-compose
+mkdir -p .tmp
+python scripts/generate_local_supabase_env.py host .tmp/.env.host.local-supabase-bootstrap
 SERVICE_ROLE_KEY=$(python - <<'PY'
 from pathlib import Path
-for line in Path(".env.compose.local-supabase").read_text(encoding="utf-8").splitlines():
+for line in Path(".tmp/.env.host.local-supabase-bootstrap").read_text(encoding="utf-8").splitlines():
     if line.startswith("SUPABASE_SERVICE_ROLE_KEY="):
         print(line.split("=", 1)[1])
         break
@@ -26,7 +28,7 @@ PY
 )
 SUPABASE_URL=$(python - <<'PY'
 from pathlib import Path
-for line in Path(".env.compose.local-supabase").read_text(encoding="utf-8").splitlines():
+for line in Path(".tmp/.env.host.local-supabase-bootstrap").read_text(encoding="utf-8").splitlines():
     if line.startswith("SUPABASE_URL="):
         print(line.split("=", 1)[1])
         break

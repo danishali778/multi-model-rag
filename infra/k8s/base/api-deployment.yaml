@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
         - name: api
-          image: ghcr.io/danishali778/multi-model-rag:latest
+          image: ghcr.io/danishali778/multi-model-rag-api:latest
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
