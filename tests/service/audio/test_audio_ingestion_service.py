@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
@@ -15,12 +16,12 @@ class _DocumentRepo:
         self.created_payload = None
         self.storage_update = None
 
-    async def create_document(self, payload):
+    async def create_document(self, payload, conn=None):
         self.created_payload = payload
         self.document_id = uuid4()
         return self.document_id
 
-    async def update_document_storage(self, payload):
+    async def update_document_storage(self, payload, conn=None):
         self.storage_update = payload
 
     async def get_document(self, *, workspace_id, document_id, user_id):
@@ -47,7 +48,7 @@ class _AudioRepo:
     def __init__(self):
         self.created_payload = None
 
-    async def create_audio_document(self, payload):
+    async def create_audio_document(self, payload, conn=None):
         self.created_payload = payload
 
     async def get_audio_document(self, *, workspace_id, document_id):
@@ -74,7 +75,7 @@ class _AudioRepo:
 
 
 class _IngestionRepo:
-    async def create_ingestion_job(self, payload):
+    async def create_ingestion_job(self, payload, conn=None):
         self.payload = payload
         self.job_id = uuid4()
         return self.job_id
@@ -97,6 +98,17 @@ class _Storage:
         return SimpleNamespace(bucket=bucket, path=path, upload_url="https://example/upload")
 
 
+class _Connection:
+    async def commit(self):
+        return None
+
+
+class _Database:
+    @asynccontextmanager
+    async def connection(self):
+        yield _Connection()
+
+
 class _Ingestion:
     def __init__(self):
         self.enqueued = []
@@ -107,6 +119,7 @@ class _Ingestion:
 
 def test_audio_ingestion_service_creates_audio_upload_target():
     service = AudioIngestionService(
+        db=_Database(),
         document_repository=_DocumentRepo(),
         audio_repository=_AudioRepo(),
         ingestion_repository=_IngestionRepo(),
@@ -131,6 +144,7 @@ def test_audio_ingestion_service_reingest_enqueues_job():
     ingestion = _Ingestion()
     doc_repo = _DocumentRepo()
     service = AudioIngestionService(
+        db=_Database(),
         document_repository=doc_repo,
         audio_repository=_AudioRepo(),
         ingestion_repository=_IngestionRepo(),

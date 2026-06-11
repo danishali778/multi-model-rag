@@ -8,6 +8,15 @@ from app.api.schemas.chat import ChatRequest, ChatResponse, SourceResponse, Usag
 from app.domain.entities.rag import Principal
 
 
+class _IdempotencyService:
+    def __init__(self):
+        self.calls = []
+
+    async def execute(self, **kwargs):
+        self.calls.append(kwargs)
+        return await kwargs["execute"]()
+
+
 def test_chat_route_delegates_to_chat_service():
     expected = ChatResponse(
         conversation_id=uuid4(),
@@ -37,10 +46,13 @@ def test_chat_route_delegates_to_chat_service():
         captured["route_key"] = route_key
         captured["profile"] = profile
 
+    idempotency = _IdempotencyService()
+
     context = WorkspaceContext(
         container=SimpleNamespace(
             chat_service=SimpleNamespace(answer_question=fake_answer_question),
             rate_limiter=SimpleNamespace(check_request=fake_check_request),
+            idempotency_service=idempotency,
         ),
         principal=Principal(user_id=uuid4(), email="dev@example.com", auth_method="api_key", role="owner"),
         workspace_id=uuid4(),
@@ -54,3 +66,45 @@ def test_chat_route_delegates_to_chat_service():
     assert captured["workspace_id"] == str(context.workspace_id)
     assert captured["route_key"] == "/v1/chat"
     assert captured["profile"] == "balanced"
+
+
+def test_chat_route_uses_idempotency_service_when_key_present():
+    expected = ChatResponse(
+        conversation_id=uuid4(),
+        message_id=uuid4(),
+        answer="Remote work is allowed [source:1].",
+        sources=[],
+        model="groq:mock-model",
+        usage=UsageResponse(input_tokens=10, output_tokens=5, total_tokens=15),
+        metadata={"profile": "balanced"},
+    )
+
+    async def fake_answer_question(*, workspace_id, principal, payload):
+        assert payload.query == "What is the remote work policy?"
+        return expected
+
+    async def fake_check_request(*, principal, workspace_id, route_key, profile=None):
+        return None
+
+    idempotency = _IdempotencyService()
+    context = WorkspaceContext(
+        container=SimpleNamespace(
+            chat_service=SimpleNamespace(answer_question=fake_answer_question),
+            rate_limiter=SimpleNamespace(check_request=fake_check_request),
+            idempotency_service=idempotency,
+        ),
+        principal=Principal(user_id=uuid4(), email="dev@example.com", auth_method="api_key", role="owner"),
+        workspace_id=uuid4(),
+    )
+
+    response = asyncio.run(
+        answer_question(
+            ChatRequest(query="What is the remote work policy?", profile="balanced"),
+            context,
+            idempotency_key="idem-chat-1",
+        )
+    )
+
+    assert response == expected
+    assert idempotency.calls[0]["idempotency_key"] == "idem-chat-1"
+    assert idempotency.calls[0]["route_key"] == "/v1/chat"
