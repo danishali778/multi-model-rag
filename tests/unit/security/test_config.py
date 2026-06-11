@@ -77,3 +77,12 @@ def test_validate_runtime_rejects_dev_api_key_in_production(monkeypatch):
 
     with pytest.raises(ValueError, match="ALLOW_DEV_API_KEY"):
         settings.validate_runtime()
+
+
+def test_blank_hf_api_token_falls_back_to_huggingface_alias(monkeypatch):
+    monkeypatch.setenv("HF_API_TOKEN", "")
+    monkeypatch.setenv("HUGGINGFACE_API_KEY", "hf-key")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.hf_api_token == "hf-key"

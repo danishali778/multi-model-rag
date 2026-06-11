@@ -35,6 +35,32 @@ The default bootstrap flow:
 4. waits for API readiness
 5. verifies database bootstrap and the `evaluation_runs` table against remote Supabase
 
+### Dev: remote Supabase with live reload
+
+Use this when you want the full container stack but do not want to rebuild on every normal Python source edit.
+
+1. Copy `.env.compose.dev.example` to `.env.compose.dev`.
+2. Fill in remote Supabase credentials and provider keys.
+3. Start the dev Docker stack:
+
+```bash
+./scripts/bootstrap_compose_dev_remote.sh
+```
+
+PowerShell:
+
+```powershell
+.\scripts\bootstrap_compose_dev_remote.ps1
+```
+
+This dev path:
+
+1. validates `.env.compose.dev`
+2. validates `docker-compose.yml` layered with `docker-compose.dev.yml`
+3. starts the same full stack as the production-shaped local runtime
+4. mounts `app/`, `scripts/`, and `infra/docker/` into the API and worker containers
+5. enables API reload and worker auto-restart on Python file changes
+
 ### Optional: local Supabase
 
 Use this mode only when you explicitly want local DB/Auth/Storage.
@@ -63,6 +89,10 @@ The API and worker share one codebase but build different targets:
   - installs core runtime dependencies only
 - `worker-runtime`
   - installs core runtime dependencies plus ingestion extras such as `docling`
+- `api-dev-runtime`
+  - adds container dev tooling and starts Uvicorn with reload
+- `worker-dev-runtime`
+  - adds container dev tooling and starts a watcher-managed Celery process
 
 Kubernetes should publish and deploy these as separate image artifacts, for example:
 

@@ -15,17 +15,24 @@ def resolve_requirements(target: str) -> list[str]:
 
     if target == "core":
         return list(project["dependencies"])
+    if target == "container-dev":
+        return list(optional_dependencies.get("container-dev", []))
     if target == "ingestion":
         return list(optional_dependencies.get("ingestion", []))
     if target == "worker":
         return [*project["dependencies"], *optional_dependencies.get("ingestion", [])]
-    raise ValueError(f"Unsupported target '{target}'. Expected one of: core, ingestion, worker.")
+    raise ValueError(
+        f"Unsupported target '{target}'. Expected one of: core, container-dev, ingestion, worker."
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
     args = argv or sys.argv[1:]
     if len(args) != 1:
-        print("usage: python scripts/export_container_requirements.py <core|ingestion|worker>", file=sys.stderr)
+        print(
+            "usage: python scripts/export_container_requirements.py <core|container-dev|ingestion|worker>",
+            file=sys.stderr,
+        )
         return 1
 
     try:

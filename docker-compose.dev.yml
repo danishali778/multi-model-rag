@@ -1,0 +1,28 @@
+services:
+  api:
+    build:
+      context: .
+      target: api-dev-runtime
+    command: ["sh", "/app/infra/docker/api-dev-start.sh"]
+    environment:
+      APP_ENV_FILE: .env.compose.dev
+      WATCHFILES_FORCE_POLLING: "true"
+      WATCHFILES_POLL_DELAY_MS: "250"
+    volumes:
+      - ./app:/app/app
+      - ./scripts:/app/scripts
+      - ./infra/docker:/app/infra/docker
+
+  worker:
+    build:
+      context: .
+      target: worker-dev-runtime
+    command: ["sh", "/app/infra/docker/worker-dev-start.sh"]
+    environment:
+      APP_ENV_FILE: .env.compose.dev
+      WATCHFILES_FORCE_POLLING: "true"
+      WATCHFILES_POLL_DELAY_MS: "250"
+    volumes:
+      - ./app:/app/app
+      - ./scripts:/app/scripts
+      - ./infra/docker:/app/infra/docker
