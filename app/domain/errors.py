@@ -32,6 +32,11 @@ class ForbiddenError(AppError):
         super().__init__(message, code="forbidden", status_code=403, details=details)
 
 
+class ConflictError(AppError):
+    def __init__(self, message: str = "Conflict.", details: dict[str, Any] | None = None):
+        super().__init__(message, code="conflict", status_code=409, details=details)
+
+
 class NotFoundError(AppError):
     def __init__(self, message: str = "Not found.", details: dict[str, Any] | None = None):
         super().__init__(message, code="not_found", status_code=404, details=details)

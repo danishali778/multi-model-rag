@@ -16,9 +16,18 @@ from app.api.schemas.audio import (
 from app.domain.entities.rag import Principal
 
 
+class _IdempotencyService:
+    def __init__(self):
+        self.calls = []
+
+    async def execute(self, **kwargs):
+        self.calls.append(kwargs)
+        return await kwargs["execute"]()
+
+
 def _context(audio_ingestion_service) -> WorkspaceContext:
     return WorkspaceContext(
-        container=SimpleNamespace(audio_ingestion_service=audio_ingestion_service),
+        container=SimpleNamespace(audio_ingestion_service=audio_ingestion_service, idempotency_service=_IdempotencyService()),
         principal=Principal(user_id=uuid4(), email="dev@example.com", auth_method="api_key", role="owner"),
         workspace_id=uuid4(),
     )
@@ -109,3 +118,38 @@ def test_ingest_audio_document_routes_to_audio_service():
     )
 
     assert response == expected
+
+
+def test_create_audio_upload_url_uses_idempotency_service_when_key_present():
+    expected = CreateAudioUploadUrlResponse(
+        bucket="raw-documents",
+        path="workspaces/x/documents/y/raw/briefing.wav",
+        upload_url="https://example/upload",
+        document_id=uuid4(),
+    )
+
+    async def fake_create_upload_target(workspace_id, principal, payload):
+        assert payload.filename == "briefing.wav"
+        return expected
+
+    idempotency = _IdempotencyService()
+    context = WorkspaceContext(
+        container=SimpleNamespace(
+            audio_ingestion_service=SimpleNamespace(create_upload_target=fake_create_upload_target),
+            idempotency_service=idempotency,
+        ),
+        principal=Principal(user_id=uuid4(), email="dev@example.com", auth_method="api_key", role="owner"),
+        workspace_id=uuid4(),
+    )
+
+    response = asyncio.run(
+        create_audio_upload_url(
+            CreateAudioUploadUrlRequest(filename="briefing.wav", content_type="audio/wav"),
+            context,
+            idempotency_key="idem-audio-1",
+        )
+    )
+
+    assert response == expected
+    assert idempotency.calls[0]["idempotency_key"] == "idem-audio-1"
+    assert idempotency.calls[0]["route_key"] == "/v1/audio/documents/upload-url"

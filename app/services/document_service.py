@@ -16,6 +16,7 @@ from app.api.schemas.documents import (
     IngestionJobResponse,
 )
 from app.core.config import Settings
+from app.storage.db.session import Database
 from app.domain.entities.rag import IngestionTaskPayload, Principal
 from app.domain.errors import BadRequestError
 from app.services.ingestion_service import IngestionService
@@ -30,12 +31,14 @@ class DocumentService:
     def __init__(
         self,
         *,
+        db: Database,
         document_repository: DocumentRepository,
         ingestion_repository: IngestionRepository,
         ingestion_service: IngestionService,
         storage: StorageClient,
         settings: Settings,
     ):
+        self.db = db
         self.document_repository = document_repository
         self.ingestion_repository = ingestion_repository
         self.ingestion_service = ingestion_service
@@ -51,24 +54,28 @@ class DocumentService:
         text = payload.text.strip()
         if not text:
             raise BadRequestError("Document text cannot be empty.")
-        document_id = await self.document_repository.create_document(
-            DocumentCreateInput(
-                workspace_id=workspace_id,
-                created_by=principal.user_id,
-                title=payload.title,
-                source_type=payload.source_type,
-                source_uri=f"inline://{payload.title}",
-                storage_bucket=None,
-                storage_path=None,
-                content_hash=None,
-                status="pending",
-                sensitivity=payload.sensitivity,
-                metadata={**payload.metadata, "_inline_text": text},
+        async with self.db.connection() as conn:
+            document_id = await self.document_repository.create_document(
+                DocumentCreateInput(
+                    workspace_id=workspace_id,
+                    created_by=principal.user_id,
+                    title=payload.title,
+                    source_type=payload.source_type,
+                    source_uri=f"inline://{payload.title}",
+                    storage_bucket=None,
+                    storage_path=None,
+                    content_hash=None,
+                    status="pending",
+                    sensitivity=payload.sensitivity,
+                    metadata={**payload.metadata, "_inline_text": text},
+                ),
+                conn=conn,
             )
-        )
-        job_id = await self.ingestion_repository.create_ingestion_job(
-            IngestionJobCreateInput(workspace_id=workspace_id, document_id=document_id)
-        )
+            job_id = await self.ingestion_repository.create_ingestion_job(
+                IngestionJobCreateInput(workspace_id=workspace_id, document_id=document_id),
+                conn=conn,
+            )
+            await conn.commit()
         task_payload = IngestionTaskPayload(workspace_id=workspace_id, document_id=document_id, job_id=job_id)
         if self.settings.ingestion_inline_text_sync:
             await self.ingestion_service.ingest_document(
@@ -90,34 +97,38 @@ class DocumentService:
     ) -> CreateUploadUrlResponse:
         source_type = payload.source_type or _infer_source_type(payload.filename, payload.content_type)
         document_title = payload.title or payload.filename
-        document_id = await self.document_repository.create_document(
-            DocumentCreateInput(
-                workspace_id=workspace_id,
-                created_by=principal.user_id,
-                title=document_title,
-                source_type=source_type,
-                source_uri=f"storage://{self.settings.supabase_raw_bucket}/{document_title}",
-                storage_bucket=self.settings.supabase_raw_bucket,
-                storage_path="pending",
-                content_hash=None,
-                status="pending",
-                sensitivity=payload.sensitivity,
-                metadata={
-                    **payload.metadata,
-                    "_content_type": payload.content_type,
-                    "_filename": payload.filename,
-                },
+        async with self.db.connection() as conn:
+            document_id = await self.document_repository.create_document(
+                DocumentCreateInput(
+                    workspace_id=workspace_id,
+                    created_by=principal.user_id,
+                    title=document_title,
+                    source_type=source_type,
+                    source_uri=f"storage://{self.settings.supabase_raw_bucket}/{document_title}",
+                    storage_bucket=self.settings.supabase_raw_bucket,
+                    storage_path="pending",
+                    content_hash=None,
+                    status="pending",
+                    sensitivity=payload.sensitivity,
+                    metadata={
+                        **payload.metadata,
+                        "_content_type": payload.content_type,
+                        "_filename": payload.filename,
+                    },
+                ),
+                conn=conn,
             )
-        )
-        path = f"workspaces/{workspace_id}/documents/{document_id}/raw/{payload.filename}"
-        await self.document_repository.update_document_storage(
-            DocumentStorageUpdateInput(
-                document_id=document_id,
-                source_uri=f"storage://{self.settings.supabase_raw_bucket}/{path}",
-                storage_bucket=self.settings.supabase_raw_bucket,
-                storage_path=path,
+            path = f"workspaces/{workspace_id}/documents/{document_id}/raw/{payload.filename}"
+            await self.document_repository.update_document_storage(
+                DocumentStorageUpdateInput(
+                    document_id=document_id,
+                    source_uri=f"storage://{self.settings.supabase_raw_bucket}/{path}",
+                    storage_bucket=self.settings.supabase_raw_bucket,
+                    storage_path=path,
+                ),
+                conn=conn,
             )
-        )
+            await conn.commit()
         target = await self.storage.create_signed_upload_target(
             bucket=self.settings.supabase_raw_bucket,
             path=path,
@@ -128,6 +139,14 @@ class DocumentService:
             upload_url=_normalize_upload_url(target.upload_url),
             document_id=document_id,
         )
+
+    async def refresh_upload_target_response(self, payload: CreateUploadUrlResponse) -> CreateUploadUrlResponse:
+        target = await self.storage.create_signed_upload_target(
+            bucket=payload.bucket,
+            path=payload.path,
+            upsert=True,
+        )
+        return payload.model_copy(update={"upload_url": _normalize_upload_url(target.upload_url)})
 
     async def list_documents(
         self,

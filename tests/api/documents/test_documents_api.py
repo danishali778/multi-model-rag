@@ -29,9 +29,18 @@ from app.api.schemas.documents import (
 from app.domain.entities.rag import Principal
 
 
+class _IdempotencyService:
+    def __init__(self):
+        self.calls = []
+
+    async def execute(self, **kwargs):
+        self.calls.append(kwargs)
+        return await kwargs["execute"]()
+
+
 def _context(document_service) -> WorkspaceContext:
     return WorkspaceContext(
-        container=SimpleNamespace(document_service=document_service),
+        container=SimpleNamespace(document_service=document_service, idempotency_service=_IdempotencyService()),
         principal=Principal(user_id=uuid4(), email="dev@example.com", auth_method="api_key", role="owner"),
         workspace_id=uuid4(),
     )
@@ -203,3 +212,34 @@ def test_get_ingestion_job_routes_to_document_service():
     )
 
     assert response == expected
+
+
+def test_create_document_uses_idempotency_service_when_key_present():
+    expected = CreateDocumentResponse(document_id=uuid4(), status="indexed", ingestion_job_id=uuid4())
+
+    async def fake_create_text_document(workspace_id, principal, payload):
+        assert payload.title == "Handbook"
+        return expected
+
+    idempotency = _IdempotencyService()
+    context = WorkspaceContext(
+        container=SimpleNamespace(
+            document_service=SimpleNamespace(create_text_document=fake_create_text_document),
+            idempotency_service=idempotency,
+        ),
+        principal=Principal(user_id=uuid4(), email="dev@example.com", auth_method="api_key", role="owner"),
+        workspace_id=uuid4(),
+    )
+
+    response = asyncio.run(
+        create_document(
+            CreateDocumentRequest(title="Handbook", source_type="text", text="Remote work is allowed."),
+            context,
+            idempotency_key="idem-doc-1",
+        )
+    )
+
+    assert response == expected
+    assert idempotency.calls[0]["idempotency_key"] == "idem-doc-1"
+    assert idempotency.calls[0]["route_key"] == "/v1/documents"
+    assert idempotency.calls[0]["request_body"]["title"] == "Handbook"

@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -12,11 +13,11 @@ class _DocumentRepo:
         self.created_payload = None
         self.storage_update = None
 
-    async def create_document(self, payload):
+    async def create_document(self, payload, conn=None):
         self.created_payload = payload
         return uuid4()
 
-    async def update_document_storage(self, payload):
+    async def update_document_storage(self, payload, conn=None):
         self.storage_update = payload
 
 
@@ -24,10 +25,22 @@ class _IngestionRepo:
     def __init__(self):
         self.created_job = None
 
-    async def create_ingestion_job(self, payload):
+    async def create_ingestion_job(self, payload, conn=None):
         self.created_job = (payload.workspace_id, payload.document_id)
         return uuid4()
 
+class _Connection:
+    def __init__(self):
+        self.committed = False
+
+    async def commit(self):
+        self.committed = True
+
+
+class _Database:
+    @asynccontextmanager
+    async def connection(self):
+        yield _Connection()
 
 
 class _Storage:
@@ -58,6 +71,7 @@ def test_create_upload_target_infers_source_type_and_storage_path():
         supabase_storage_service_key="service-role",
     )
     service = DocumentService(
+        db=_Database(),
         document_repository=repo,
         ingestion_repository=ingestion_repo,
         ingestion_service=SimpleNamespace(),
@@ -98,6 +112,7 @@ def test_create_upload_target_normalizes_signed_upload_url():
         supabase_storage_service_key="service-role",
     )
     service = DocumentService(
+        db=_Database(),
         document_repository=repo,
         ingestion_repository=ingestion_repo,
         ingestion_service=SimpleNamespace(),
@@ -127,6 +142,7 @@ def test_create_upload_target_infers_audio_source_type():
         supabase_storage_service_key="service-role",
     )
     service = DocumentService(
+        db=_Database(),
         document_repository=repo,
         ingestion_repository=ingestion_repo,
         ingestion_service=SimpleNamespace(),
@@ -158,6 +174,7 @@ def test_create_text_document_sync_calls_ingest_document():
         supabase_storage_service_key="service-role",
     )
     service = DocumentService(
+        db=_Database(),
         document_repository=repo,
         ingestion_repository=ingestion_repo,
         ingestion_service=ingestion,
@@ -190,6 +207,7 @@ def test_create_text_document_async_enqueues_payload():
         supabase_storage_service_key="service-role",
     )
     service = DocumentService(
+        db=_Database(),
         document_repository=repo,
         ingestion_repository=ingestion_repo,
         ingestion_service=ingestion,

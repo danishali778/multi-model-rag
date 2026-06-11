@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -20,11 +21,11 @@ class _Repo:
         self.created_conversation = None
         self.created_messages = []
 
-    async def create_conversation(self, payload):
+    async def create_conversation(self, payload, conn=None):
         self.created_conversation = payload
         return uuid4()
 
-    async def create_message(self, payload):
+    async def create_message(self, payload, conn=None):
         self.created_messages.append(payload)
         return uuid4()
 
@@ -75,6 +76,17 @@ class _SecurityPolicy:
         return None
 
 
+class _Connection:
+    async def commit(self):
+        return None
+
+
+class _Database:
+    @asynccontextmanager
+    async def connection(self):
+        yield _Connection()
+
+
 async def _complete_chat(messages, profile):
     return SimpleNamespace(
         answer="Remote work is allowed three days per week [source:1].",
@@ -89,6 +101,7 @@ async def _complete_chat(messages, profile):
 def test_answer_question_returns_current_chat_schema():
     repo = _Repo()
     service = ChatService(
+        db=_Database(),
         conversation_repository=repo,
         model_router=SimpleNamespace(complete_chat=_complete_chat),
         retrieval_service=_Retrieval(),
@@ -121,6 +134,7 @@ def test_answer_text_turn_reuses_existing_owned_conversation():
 
     repo.get_conversation = _get_conversation
     service = ChatService(
+        db=_Database(),
         conversation_repository=repo,
         model_router=SimpleNamespace(complete_chat=_complete_chat),
         retrieval_service=_Retrieval(),
@@ -148,6 +162,7 @@ def test_answer_text_turn_reuses_existing_owned_conversation():
 def test_answer_text_turn_rejects_missing_conversation():
     repo = _Repo()
     service = ChatService(
+        db=_Database(),
         conversation_repository=repo,
         model_router=SimpleNamespace(complete_chat=_complete_chat),
         retrieval_service=_Retrieval(),

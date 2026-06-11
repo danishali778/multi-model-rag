@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class ConversationCreateInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    id: UUID | None = None
     workspace_id: UUID
     user_id: UUID
     title: str
@@ -19,6 +20,7 @@ class ConversationCreateInput(BaseModel):
 class MessageCreateInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    id: UUID | None = None
     conversation_id: UUID
     role: str
     content: str

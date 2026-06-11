@@ -91,6 +91,9 @@ class WorkspaceRepository:
                     """
                     insert into workspaces (name, slug, plan, status)
                     values (%s, %s, 'personal', 'active')
+                    on conflict (slug) do update set
+                        name = excluded.name,
+                        updated_at = now()
                     returning id
                     """,
                     (workspace_name, workspace_slug),

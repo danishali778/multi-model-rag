@@ -26,6 +26,7 @@ from app.services.document_service import DocumentService
 from app.services.evaluation_service import EvaluationService
 from app.services.feedback_service import FeedbackService
 from app.services.health_service import HealthService
+from app.services.idempotency_service import IdempotencyService
 from app.services.ingestion_service import IngestionService
 from app.services.personal_workspace_service import PersonalWorkspaceService
 from app.services.voice_chat_service import VoiceChatService
@@ -38,6 +39,7 @@ from app.storage.repositories.conversation import ConversationRepository
 from app.storage.repositories.document import DocumentRepository
 from app.storage.repositories.evaluation import EvaluationRepository
 from app.storage.repositories.feedback import FeedbackRepository
+from app.storage.repositories.idempotency import IdempotencyRepository
 from app.storage.repositories.ingestion import IngestionRepository
 from app.storage.repositories.retrieval import RetrievalRepository
 from app.storage.repositories.voice import VoiceRepository
@@ -57,6 +59,7 @@ class AppContainer:
         self.voice_repository = VoiceRepository(self.db, settings)
         self.audio_repository = AudioRepository(self.db, settings)
         self.feedback_repository = FeedbackRepository(self.db, settings)
+        self.idempotency_repository = IdempotencyRepository(self.db, settings)
         self.audit_repository = AuditRepository(self.db, settings)
         self.evaluation_repository = EvaluationRepository(self.db, settings)
         self.storage = StorageClient(settings)
@@ -101,6 +104,7 @@ class AppContainer:
             settings=settings,
         )
         self.personal_workspace_service = PersonalWorkspaceService(self.workspace_repository)
+        self.idempotency_service = IdempotencyService(self.idempotency_repository)
         self.ingestion_service = IngestionService(
             document_repository=self.document_repository,
             ingestion_repository=self.ingestion_repository,
@@ -113,6 +117,7 @@ class AppContainer:
             audio_repository=self.audio_repository,
         )
         self.audio_ingestion_service = AudioIngestionService(
+            db=self.db,
             document_repository=self.document_repository,
             audio_repository=self.audio_repository,
             ingestion_repository=self.ingestion_repository,
@@ -121,6 +126,7 @@ class AppContainer:
             settings=settings,
         )
         self.document_service = DocumentService(
+            db=self.db,
             document_repository=self.document_repository,
             ingestion_repository=self.ingestion_repository,
             ingestion_service=self.ingestion_service,
@@ -128,6 +134,7 @@ class AppContainer:
             settings=settings,
         )
         self.chat_service = ChatService(
+            db=self.db,
             conversation_repository=self.conversation_repository,
             model_router=self.model_router,
             retrieval_service=self.retrieval_service,

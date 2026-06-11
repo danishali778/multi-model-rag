@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class DocumentCreateInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    id: UUID | None = None
     workspace_id: UUID
     created_by: UUID
     title: str
