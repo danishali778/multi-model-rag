@@ -399,15 +399,18 @@ class ModelRouter:
             provider = self.embedding_providers.get(provider_name)
             if provider is not None:
                 checks.append(await provider.health_check())
-        if self.stt_providers:
+        if self._voice_required_for_healthcheck() and self.stt_providers:
             provider = self.stt_providers.get(self.settings.voice_stt_provider)
             if provider is not None:
                 checks.append(await provider.health_check())
-        if self.tts_providers:
+        if self._voice_required_for_healthcheck() and self.tts_providers:
             provider = self.tts_providers.get(self.settings.voice_tts_provider)
             if provider is not None:
                 checks.append(await provider.health_check())
         return all(checks) if checks else False
+
+    def _voice_required_for_healthcheck(self) -> bool:
+        return self.settings.environment.lower() != "development"
 
     def _build_config(self, profile: str, target: ProviderTarget) -> ModelConfig:
         return ModelConfig(
