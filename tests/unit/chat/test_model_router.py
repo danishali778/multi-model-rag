@@ -12,6 +12,12 @@ from app.llm.providers.base import (
     EmbeddingResult,
     ModelConfig,
     ProviderRequestError,
+    SpeechSynthesisResult,
+    SpeechToTextConfig,
+    SpeechToTextProvider,
+    TextToSpeechConfig,
+    TextToSpeechProvider,
+    TranscriptionResult,
 )
 from app.llm.router import ModelRouter
 
@@ -47,6 +53,53 @@ class _FakeEmbeddingProvider(EmbeddingProvider):
 
     async def health_check(self) -> bool:
         return True
+
+
+class _FakeSttProvider(SpeechToTextProvider):
+    provider_name = "openai"
+
+    def __init__(self, healthy: bool):
+        self.healthy = healthy
+
+    async def transcribe(
+        self,
+        audio_bytes: bytes,
+        mime_type: str,
+        filename: str,
+        config: SpeechToTextConfig,
+    ) -> TranscriptionResult:
+        return TranscriptionResult(
+            transcript="test",
+            model_name=config.model_name,
+            provider=self.provider_name,
+            estimated_cost_usd=0.0,
+        )
+
+    async def health_check(self) -> bool:
+        return self.healthy
+
+
+class _FakeTtsProvider(TextToSpeechProvider):
+    provider_name = "openai"
+
+    def __init__(self, healthy: bool):
+        self.healthy = healthy
+
+    async def synthesize(
+        self,
+        text: str,
+        config: TextToSpeechConfig,
+    ) -> SpeechSynthesisResult:
+        return SpeechSynthesisResult(
+            audio_bytes=b"audio",
+            model_name=config.model_name,
+            provider=self.provider_name,
+            audio_format=config.audio_format,
+            estimated_cost_usd=0.0,
+        )
+
+    async def health_check(self) -> bool:
+        return self.healthy
 
 
 def _settings(**overrides) -> Settings:
@@ -136,3 +189,29 @@ def test_router_rejects_invalid_profile():
 
     with pytest.raises(BadRequestError):
         router.chat_config("unknown", settings.profile_targets("balanced")[0])
+
+
+def test_router_health_check_ignores_voice_in_development():
+    settings = _settings(environment="development")
+    router = ModelRouter(
+        settings=settings,
+        chat_providers={"groq": _FakeChatProvider("groq", lambda *_: httpx.ConnectError("boom"))},
+        embedding_providers={"huggingface": _FakeEmbeddingProvider()},
+        stt_providers={"openai": _FakeSttProvider(healthy=False)},
+        tts_providers={"openai": _FakeTtsProvider(healthy=False)},
+    )
+
+    assert asyncio.run(router.health_check()) is True
+
+
+def test_router_health_check_requires_voice_outside_development():
+    settings = _settings(environment="production", openai_api_key="openai-key")
+    router = ModelRouter(
+        settings=settings,
+        chat_providers={"groq": _FakeChatProvider("groq", lambda *_: httpx.ConnectError("boom"))},
+        embedding_providers={"huggingface": _FakeEmbeddingProvider()},
+        stt_providers={"openai": _FakeSttProvider(healthy=False)},
+        tts_providers={"openai": _FakeTtsProvider(healthy=False)},
+    )
+
+    assert asyncio.run(router.health_check()) is False
