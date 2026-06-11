@@ -272,6 +272,7 @@ Choose the env template that matches how you want to run the backend.
 ```bash
 cp .env.example .env
 cp .env.compose.example .env.compose
+cp .env.compose.dev.example .env.compose.dev
 ```
 
 Use:
@@ -280,6 +281,8 @@ Use:
   - app runs on your host machine against your remote Supabase project
 - `.env.compose.example`
   - app runs in Docker Compose against your remote Supabase project
+- `.env.compose.dev.example`
+  - app runs in Docker Compose dev mode against your remote Supabase project with live reload
 - `.env.host.local-supabase.example`
   - optional host-run app flow against `supabase start`
 - `.env.compose.local-supabase.example`
@@ -307,11 +310,11 @@ Key environment groups:
 - security/rate-limit settings
 - observability settings
 
-See [.env.example](.env.example), [.env.compose.example](.env.compose.example), [.env.host.local-supabase.example](.env.host.local-supabase.example), [.env.compose.local-supabase.example](.env.compose.local-supabase.example), [.env.production.app.example](.env.production.app.example), and [app/core/config.py](app/core/config.py) for the full list.
+See [.env.example](.env.example), [.env.compose.example](.env.compose.example), [.env.compose.dev.example](.env.compose.dev.example), [.env.host.local-supabase.example](.env.host.local-supabase.example), [.env.compose.local-supabase.example](.env.compose.local-supabase.example), [.env.production.app.example](.env.production.app.example), and [app/core/config.py](app/core/config.py) for the full list.
 
 ### Run with Docker Compose
 
-The default Docker path keeps DB/Auth/Storage remote and only runs the app tier plus local support services:
+The default production-shaped Docker path keeps DB/Auth/Storage remote and only runs the app tier plus local support services:
 
 - the API
 - the Celery worker
@@ -349,6 +352,32 @@ The default bootstrap script:
 3. starts the app-side Compose services
 4. waits for readiness
 5. verifies database bootstrap and migration state against the remote Supabase project
+
+### Run with Docker Compose dev workflow
+
+The dev Docker path keeps the same remote-Supabase contract and full local support stack, but mounts source code into the `api` and `worker` containers so normal Python edits reload without rebuilding.
+
+```bash
+cp .env.compose.dev.example .env.compose.dev
+./scripts/bootstrap_compose_dev_remote.sh
+```
+
+PowerShell:
+
+```powershell
+Copy-Item .env.compose.dev.example .env.compose.dev
+.\scripts\bootstrap_compose_dev_remote.ps1
+```
+
+The dev bootstrap script:
+
+1. validates `.env.compose.dev`
+2. validates the layered Compose configuration
+3. starts the full dev stack with `docker-compose.yml` plus `docker-compose.dev.yml`
+4. waits for readiness
+5. verifies database bootstrap against the remote Supabase project
+
+Normal source edits to `app/` and `scripts/` should reload the API and restart the worker automatically. Rebuilds are still required when dependencies, Dockerfile stages, or env contracts change.
 
 ### Optional local Supabase mode
 
@@ -489,6 +518,11 @@ Production-shaped local container runs use:
 - dedicated `api` and `worker` services
 - `CELERY_TASK_ALWAYS_EAGER=false`
 - a slim API image target and a heavier worker image target built from the same Dockerfile
+
+The separate dev Docker workflow keeps the same full stack, but swaps in:
+
+- `api-dev-runtime` with mounted source + `uvicorn --reload`
+- `worker-dev-runtime` with mounted source + a file watcher that restarts Celery on Python changes
 
 Host-only development can still choose eager execution by adjusting env values when needed.
 
