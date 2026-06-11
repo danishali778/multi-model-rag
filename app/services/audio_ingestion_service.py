@@ -10,6 +10,7 @@ from app.api.schemas.audio import (
     IngestAudioDocumentRequest,
     IngestionJobResponse,
 )
+from app.storage.db.session import Database
 from app.domain.entities.rag import IngestionTaskPayload
 from app.storage.models.audio import AudioDocumentCreateInput
 from app.storage.models.document import DocumentCreateInput, DocumentStorageUpdateInput
@@ -21,6 +22,7 @@ class AudioIngestionService:
     def __init__(
         self,
         *,
+        db: Database,
         document_repository,
         audio_repository,
         ingestion_repository,
@@ -28,6 +30,7 @@ class AudioIngestionService:
         storage,
         settings,
     ) -> None:
+        self._db = db
         self._document_repository = document_repository
         self._audio_repository = audio_repository
         self._ingestion_repository = ingestion_repository
@@ -43,46 +46,51 @@ class AudioIngestionService:
     ) -> CreateAudioUploadUrlResponse:
         extension_for_mime_type(payload.content_type)
         title = payload.title or payload.filename
-        document_id = await self._document_repository.create_document(
-            DocumentCreateInput(
-                workspace_id=workspace_id,
-                created_by=principal.user_id,
-                title=title,
-                source_type="audio",
-                source_uri=f"storage://{self._settings.supabase_raw_bucket}/{title}",
-                storage_bucket=self._settings.supabase_raw_bucket,
-                storage_path="pending",
-                content_hash=None,
-                status="pending",
-                sensitivity=payload.sensitivity,
-                metadata={
-                    **payload.metadata,
-                    "_content_type": payload.content_type,
-                    "_filename": payload.filename,
-                    "audio_mime_type": payload.content_type,
-                },
+        async with self._db.connection() as conn:
+            document_id = await self._document_repository.create_document(
+                DocumentCreateInput(
+                    workspace_id=workspace_id,
+                    created_by=principal.user_id,
+                    title=title,
+                    source_type="audio",
+                    source_uri=f"storage://{self._settings.supabase_raw_bucket}/{title}",
+                    storage_bucket=self._settings.supabase_raw_bucket,
+                    storage_path="pending",
+                    content_hash=None,
+                    status="pending",
+                    sensitivity=payload.sensitivity,
+                    metadata={
+                        **payload.metadata,
+                        "_content_type": payload.content_type,
+                        "_filename": payload.filename,
+                        "audio_mime_type": payload.content_type,
+                    },
+                ),
+                conn=conn,
             )
-        )
-        path = f"workspaces/{workspace_id}/documents/{document_id}/raw/{payload.filename}"
-        await self._document_repository.update_document_storage(
-            DocumentStorageUpdateInput(
-                document_id=document_id,
-                source_uri=f"storage://{self._settings.supabase_raw_bucket}/{path}",
-                storage_bucket=self._settings.supabase_raw_bucket,
-                storage_path=path,
+            path = f"workspaces/{workspace_id}/documents/{document_id}/raw/{payload.filename}"
+            await self._document_repository.update_document_storage(
+                DocumentStorageUpdateInput(
+                    document_id=document_id,
+                    source_uri=f"storage://{self._settings.supabase_raw_bucket}/{path}",
+                    storage_bucket=self._settings.supabase_raw_bucket,
+                    storage_path=path,
+                ),
+                conn=conn,
             )
-        )
-        await self._audio_repository.create_audio_document(
-            AudioDocumentCreateInput(
-                workspace_id=workspace_id,
-                document_id=document_id,
-                audio_bucket=self._settings.supabase_raw_bucket,
-                audio_path=path,
-                mime_type=payload.content_type,
-                audio_format=_audio_format(payload.filename, payload.content_type),
-                metadata={**payload.metadata, "filename": payload.filename},
+            await self._audio_repository.create_audio_document(
+                AudioDocumentCreateInput(
+                    workspace_id=workspace_id,
+                    document_id=document_id,
+                    audio_bucket=self._settings.supabase_raw_bucket,
+                    audio_path=path,
+                    mime_type=payload.content_type,
+                    audio_format=_audio_format(payload.filename, payload.content_type),
+                    metadata={**payload.metadata, "filename": payload.filename},
+                ),
+                conn=conn,
             )
-        )
+            await conn.commit()
         target = await self._storage.create_signed_upload_target(
             bucket=self._settings.supabase_raw_bucket,
             path=path,
@@ -93,6 +101,14 @@ class AudioIngestionService:
             upload_url=_normalize_upload_url(target.upload_url),
             document_id=document_id,
         )
+
+    async def refresh_upload_target_response(self, payload: CreateAudioUploadUrlResponse) -> CreateAudioUploadUrlResponse:
+        target = await self._storage.create_signed_upload_target(
+            bucket=payload.bucket,
+            path=payload.path,
+            upsert=True,
+        )
+        return payload.model_copy(update={"upload_url": _normalize_upload_url(target.upload_url)})
 
     async def get_audio_document(
         self,

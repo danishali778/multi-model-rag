@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from app.api.schemas.chat import ChatRequest, ChatResponse, SourceResponse, UsageResponse
+from app.storage.db.session import Database
 from app.domain.entities.rag import Principal, RetrievalRequest, SourceCitation, UsageStats
 from app.domain.errors import NotFoundError
 from app.llm.grounded_answering import answer_grounded_question
@@ -26,6 +27,7 @@ class ChatService:
     def __init__(
         self,
         *,
+        db: Database,
         conversation_repository,
         model_router,
         retrieval_service,
@@ -33,6 +35,7 @@ class ChatService:
         telemetry,
         settings,
     ) -> None:
+        self._db = db
         self._conversation_repository = conversation_repository
         self._model_router = model_router
         self._retrieval_service = retrieval_service
@@ -128,15 +131,7 @@ class ChatService:
             estimated_cost_usd=answer_result.estimated_cost_usd,
         )
 
-        if conversation_id is None:
-            conversation_id = await self._conversation_repository.create_conversation(
-                ConversationCreateInput(
-                    workspace_id=workspace_id,
-                    user_id=principal.user_id,
-                    title=_conversation_title(query),
-                )
-            )
-        else:
+        if conversation_id is not None:
             conversation = await self._conversation_repository.get_conversation(
                 workspace_id=workspace_id,
                 conversation_id=conversation_id,
@@ -145,31 +140,45 @@ class ChatService:
             if conversation is None:
                 raise NotFoundError("Conversation not found.")
 
-        user_message_id = await self._conversation_repository.create_message(
-            MessageCreateInput(
-                conversation_id=conversation_id,
-                role="user",
-                content=query,
-                model_profile=profile,
-                sources=[],
-                token_usage={},
+        async with self._db.connection() as conn:
+            if conversation_id is None:
+                conversation_id = await self._conversation_repository.create_conversation(
+                    ConversationCreateInput(
+                        workspace_id=workspace_id,
+                        user_id=principal.user_id,
+                        title=_conversation_title(query),
+                    ),
+                    conn=conn,
+                )
+
+            user_message_id = await self._conversation_repository.create_message(
+                MessageCreateInput(
+                    conversation_id=conversation_id,
+                    role="user",
+                    content=query,
+                    model_profile=profile,
+                    sources=[],
+                    token_usage={},
+                ),
+                conn=conn,
             )
-        )
-        message_id = await self._conversation_repository.create_message(
-            MessageCreateInput(
-                conversation_id=conversation_id,
-                role="assistant",
-                content=answer_result.answer,
-                model_profile=profile,
-                sources=[_source_payload(source) for source in sources],
-                token_usage={
-                    "input_tokens": usage.input_tokens,
-                    "output_tokens": usage.output_tokens,
-                    "total_tokens": usage.input_tokens + usage.output_tokens,
-                    "estimated_cost_usd": usage.estimated_cost_usd,
-                },
+            message_id = await self._conversation_repository.create_message(
+                MessageCreateInput(
+                    conversation_id=conversation_id,
+                    role="assistant",
+                    content=answer_result.answer,
+                    model_profile=profile,
+                    sources=[_source_payload(source) for source in sources],
+                    token_usage={
+                        "input_tokens": usage.input_tokens,
+                        "output_tokens": usage.output_tokens,
+                        "total_tokens": usage.input_tokens + usage.output_tokens,
+                        "estimated_cost_usd": usage.estimated_cost_usd,
+                    },
+                ),
+                conn=conn,
             )
-        )
+            await conn.commit()
 
         return ChatTurnResult(
             conversation_id=conversation_id,
