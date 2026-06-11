@@ -24,14 +24,14 @@ class DocumentRepository:
         self.db = db
         self.settings = settings
 
-    async def create_document(self, payload: DocumentCreateInput) -> UUID:
+    async def create_document(self, payload: DocumentCreateInput, *, conn=None) -> UUID:
         query = """
             insert into documents (
-                workspace_id, created_by, title, source_type, source_uri, storage_bucket,
+                id, workspace_id, created_by, title, source_type, source_uri, storage_bucket,
                 storage_path, content_hash, status, sensitivity, metadata
             )
             values (
-                %(workspace_id)s, %(created_by)s, %(title)s, %(source_type)s, %(source_uri)s,
+                coalesce(%(id)s, gen_random_uuid()), %(workspace_id)s, %(created_by)s, %(title)s, %(source_type)s, %(source_uri)s,
                 %(storage_bucket)s, %(storage_path)s, %(content_hash)s, %(status)s,
                 %(sensitivity)s, %(metadata)s::jsonb
             )
@@ -39,11 +39,16 @@ class DocumentRepository:
         """
         db_payload = payload.model_dump()
         db_payload["metadata"] = json.dumps(db_payload["metadata"])
-        async with self.db.connection() as conn:
+        if conn is None:
+            async with self.db.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, db_payload)
+                    row = await cur.fetchone()
+                    await conn.commit()
+        else:
             async with conn.cursor() as cur:
                 await cur.execute(query, db_payload)
                 row = await cur.fetchone()
-                await conn.commit()
         return row["id"]
 
     async def list_documents(
@@ -124,7 +129,7 @@ class DocumentRepository:
             raise NotFoundError("Document not found.")
         return DocumentIngestionRow.from_row(row)
 
-    async def update_document_storage(self, payload: DocumentStorageUpdateInput) -> None:
+    async def update_document_storage(self, payload: DocumentStorageUpdateInput, *, conn=None) -> None:
         query = """
             update documents
             set source_uri = %s,
@@ -133,13 +138,20 @@ class DocumentRepository:
                 updated_at = now()
             where id = %s
         """
-        async with self.db.connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    query,
-                    (payload.source_uri, payload.storage_bucket, payload.storage_path, payload.document_id),
-                )
-                await conn.commit()
+        if conn is None:
+            async with self.db.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        query,
+                        (payload.source_uri, payload.storage_bucket, payload.storage_path, payload.document_id),
+                    )
+                    await conn.commit()
+            return
+        async with conn.cursor() as cur:
+            await cur.execute(
+                query,
+                (payload.source_uri, payload.storage_bucket, payload.storage_path, payload.document_id),
+            )
 
     async def update_document_ingestion_metadata(self, payload: DocumentMetadataUpdateInput) -> None:
         query = """

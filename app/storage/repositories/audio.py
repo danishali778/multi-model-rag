@@ -14,7 +14,7 @@ class AudioRepository:
         self.db = db
         self.settings = settings
 
-    async def create_audio_document(self, payload: AudioDocumentCreateInput) -> None:
+    async def create_audio_document(self, payload: AudioDocumentCreateInput, *, conn=None) -> None:
         query = """
             insert into audio_documents (
                 workspace_id, document_id, audio_bucket, audio_path, mime_type, audio_format, metadata
@@ -28,21 +28,36 @@ class AudioRepository:
                 metadata = coalesce(audio_documents.metadata, '{}'::jsonb) || excluded.metadata,
                 updated_at = now()
         """
-        async with self.db.connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    query,
-                    (
-                        payload.workspace_id,
-                        payload.document_id,
-                        payload.audio_bucket,
-                        payload.audio_path,
-                        payload.mime_type,
-                        payload.audio_format,
-                        json.dumps(payload.metadata),
-                    ),
-                )
-                await conn.commit()
+        if conn is None:
+            async with self.db.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        query,
+                        (
+                            payload.workspace_id,
+                            payload.document_id,
+                            payload.audio_bucket,
+                            payload.audio_path,
+                            payload.mime_type,
+                            payload.audio_format,
+                            json.dumps(payload.metadata),
+                        ),
+                    )
+                    await conn.commit()
+            return
+        async with conn.cursor() as cur:
+            await cur.execute(
+                query,
+                (
+                    payload.workspace_id,
+                    payload.document_id,
+                    payload.audio_bucket,
+                    payload.audio_path,
+                    payload.mime_type,
+                    payload.audio_format,
+                    json.dumps(payload.metadata),
+                ),
+            )
 
     async def update_audio_document(self, *, document_id: UUID, payload: AudioDocumentUpdateInput) -> None:
         query = """

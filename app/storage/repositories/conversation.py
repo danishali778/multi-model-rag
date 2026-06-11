@@ -19,44 +19,57 @@ class ConversationRepository:
         self.db = db
         self.settings = settings
 
-    async def create_conversation(self, payload: ConversationCreateInput) -> UUID:
+    async def create_conversation(self, payload: ConversationCreateInput, *, conn=None) -> UUID:
         query = """
-            insert into conversations (workspace_id, user_id, title)
-            values (%s, %s, %s)
+            insert into conversations (id, workspace_id, user_id, title)
+            values (coalesce(%s, gen_random_uuid()), %s, %s, %s)
             returning id
         """
-        async with self.db.connection() as conn:
+        if conn is None:
+            async with self.db.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, (payload.id, payload.workspace_id, payload.user_id, payload.title))
+                    row = await cur.fetchone()
+                    await conn.commit()
+        else:
             async with conn.cursor() as cur:
-                await cur.execute(query, (payload.workspace_id, payload.user_id, payload.title))
+                await cur.execute(query, (payload.id, payload.workspace_id, payload.user_id, payload.title))
                 row = await cur.fetchone()
-                await conn.commit()
         return row["id"]
 
-    async def create_message(self, payload: MessageCreateInput) -> UUID:
+    async def create_message(self, payload: MessageCreateInput, *, conn=None) -> UUID:
         query = """
-            insert into messages (conversation_id, role, content, model_profile, sources, token_usage)
-            values (%s, %s, %s, %s, %s::jsonb, %s::jsonb)
+            insert into messages (id, conversation_id, role, content, model_profile, sources, token_usage)
+            values (coalesce(%s, gen_random_uuid()), %s, %s, %s, %s, %s::jsonb, %s::jsonb)
             returning id
         """
-        async with self.db.connection() as conn:
+        params = (
+            payload.id,
+            payload.conversation_id,
+            payload.role,
+            payload.content,
+            payload.model_profile,
+            json.dumps(payload.sources),
+            json.dumps(payload.token_usage),
+        )
+        if conn is None:
+            async with self.db.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, params)
+                    row = await cur.fetchone()
+                    await cur.execute(
+                        "update conversations set updated_at = now() where id = %s",
+                        (payload.conversation_id,),
+                    )
+                    await conn.commit()
+        else:
             async with conn.cursor() as cur:
-                await cur.execute(
-                    query,
-                    (
-                        payload.conversation_id,
-                        payload.role,
-                        payload.content,
-                        payload.model_profile,
-                        json.dumps(payload.sources),
-                        json.dumps(payload.token_usage),
-                    ),
-                )
+                await cur.execute(query, params)
                 row = await cur.fetchone()
                 await cur.execute(
                     "update conversations set updated_at = now() where id = %s",
                     (payload.conversation_id,),
                 )
-                await conn.commit()
         return row["id"]
 
     async def get_conversation(

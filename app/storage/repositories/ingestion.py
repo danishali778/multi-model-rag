@@ -22,17 +22,22 @@ class IngestionRepository:
         self.db = db
         self.settings = settings
 
-    async def create_ingestion_job(self, payload: IngestionJobCreateInput) -> UUID:
+    async def create_ingestion_job(self, payload: IngestionJobCreateInput, *, conn=None) -> UUID:
         query = """
-            insert into ingestion_jobs (workspace_id, document_id, status, stage, attempts, stats)
-            values (%s, %s, 'queued', 'queued', 1, '{}'::jsonb)
+            insert into ingestion_jobs (id, workspace_id, document_id, status, stage, attempts, stats)
+            values (coalesce(%s, gen_random_uuid()), %s, %s, 'queued', 'queued', 1, '{}'::jsonb)
             returning id
         """
-        async with self.db.connection() as conn:
+        if conn is None:
+            async with self.db.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, (payload.id, payload.workspace_id, payload.document_id))
+                    row = await cur.fetchone()
+                    await conn.commit()
+        else:
             async with conn.cursor() as cur:
-                await cur.execute(query, (payload.workspace_id, payload.document_id))
+                await cur.execute(query, (payload.id, payload.workspace_id, payload.document_id))
                 row = await cur.fetchone()
-                await conn.commit()
         return row["id"]
 
     async def update_job(self, job_id: UUID, payload: IngestionJobUpdateInput) -> None:

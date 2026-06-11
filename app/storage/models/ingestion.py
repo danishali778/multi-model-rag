@@ -14,6 +14,7 @@ from app.ingestion.chunking import ChunkDraft, StructureEdgeDraft, StructureNode
 class IngestionJobCreateInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    id: UUID | None = None
     workspace_id: UUID
     document_id: UUID
 
