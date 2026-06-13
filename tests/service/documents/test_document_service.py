@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from uuid import uuid4
 
-from app.api.schemas.documents import CreateDocumentRequest, CreateUploadUrlRequest
+from app.api.schemas.documents import CreateDocumentRequest, CreateUploadUrlRequest, IngestDocumentRequest
 from app.core.config import Settings
 from app.services.document_service import DocumentService
 
@@ -12,6 +12,7 @@ class _DocumentRepo:
     def __init__(self):
         self.created_payload = None
         self.storage_update = None
+        self.source_row = None
 
     async def create_document(self, payload, conn=None):
         self.created_payload = payload
@@ -19,6 +20,9 @@ class _DocumentRepo:
 
     async def update_document_storage(self, payload, conn=None):
         self.storage_update = payload
+
+    async def get_document_source(self, *, workspace_id, document_id, user_id):
+        return self.source_row
 
 
 class _IngestionRepo:
@@ -226,3 +230,64 @@ def test_create_text_document_async_enqueues_payload():
 
     assert response.status == "queued"
     assert len(ingestion.enqueued) == 1
+
+
+def test_reingest_text_document_sync_preserves_chunking_and_embedding_overrides():
+    repo = _DocumentRepo()
+    repo.source_row = SimpleNamespace(
+        id=uuid4(),
+        title="Handbook",
+        source_type="text",
+        sensitivity="internal",
+        metadata={"_inline_text": "Remote work is allowed."},
+    )
+    ingestion_repo = _IngestionRepo()
+    ingestion = _Ingestion()
+    settings = Settings(
+        _env_file=None,
+        ingestion_inline_text_sync=True,
+        supabase_storage_url="https://example.supabase.co",
+        supabase_storage_service_key="service-role",
+    )
+    service = DocumentService(
+        db=_Database(),
+        document_repository=repo,
+        ingestion_repository=ingestion_repo,
+        ingestion_service=ingestion,
+        storage=_Storage(),
+        settings=settings,
+    )
+    principal = SimpleNamespace(user_id=uuid4())
+    workspace_id = uuid4()
+    document_id = uuid4()
+
+    async def fake_get_job(workspace_id, job_id, principal):
+        return SimpleNamespace(
+            ingestion_job_id=job_id,
+            document_id=document_id,
+            status="succeeded",
+            stage="finalize",
+            attempts=1,
+            stats={"chunk_count": 1},
+            error_code=None,
+            error_message=None,
+        )
+
+    service.get_job = fake_get_job
+
+    asyncio.run(
+        service.reingest_document(
+            workspace_id,
+            document_id,
+            IngestDocumentRequest(
+                force_reindex=True,
+                chunking_version="hybrid-graph-v1",
+                embedding_model="text-embedding-3-small",
+            ),
+            principal,
+        )
+    )
+
+    assert len(ingestion.inline_calls) == 1
+    assert ingestion.inline_calls[0]["chunking_version"] == "hybrid-graph-v1"
+    assert ingestion.inline_calls[0]["embedding_model"] == "text-embedding-3-small"

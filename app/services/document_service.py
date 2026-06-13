@@ -215,6 +215,8 @@ class DocumentService:
                     document.source_type,
                     document.sensitivity,
                 ),
+                chunking_version=payload.chunking_version,
+                embedding_model=payload.embedding_model,
             )
         else:
             await self.ingestion_service.enqueue_ingestion(task_payload)
