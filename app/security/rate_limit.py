@@ -4,6 +4,7 @@ import asyncio
 import time
 from collections import deque
 from dataclasses import dataclass
+from uuid import uuid4
 
 try:
     from redis import asyncio as redis_asyncio
@@ -23,6 +24,29 @@ class RateLimitDecision:
 
 
 class RateLimiter:
+    _REDIS_RATE_LIMIT_SCRIPT = """
+local key = KEYS[1]
+local now_ms = tonumber(ARGV[1])
+local window_ms = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+local member = ARGV[4]
+
+redis.call('ZREMRANGEBYSCORE', key, 0, now_ms - window_ms)
+local current = redis.call('ZCARD', key)
+if current >= limit then
+  local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+  local retry_after = math.ceil(window_ms / 1000)
+  if oldest[2] then
+    retry_after = math.max(1, math.ceil(((tonumber(oldest[2]) + window_ms) - now_ms) / 1000))
+  end
+  return {0, 0, retry_after}
+end
+
+redis.call('ZADD', key, now_ms, member)
+redis.call('EXPIRE', key, math.ceil(window_ms / 1000))
+return {1, limit - current - 1, 0}
+"""
+
     def __init__(self, settings: Settings):
         self.settings = settings
         self._memory_store: dict[str, deque[float]] = {}
@@ -71,17 +95,22 @@ class RateLimiter:
         return await self._check_window_memory(key, limit, window_seconds)
 
     async def _check_window_redis(self, key: str, limit: int, window_seconds: int) -> RateLimitDecision:
-        now = int(time.time())
-        window_start = now - window_seconds
-        async with self._redis.pipeline(transaction=True) as pipe:
-            pipe.zremrangebyscore(key, 0, window_start)
-            pipe.zcard(key)
-            pipe.zadd(key, {str(now): now})
-            pipe.expire(key, window_seconds)
-            _, current_count, _, _ = await pipe.execute()
-        remaining = max(limit - int(current_count) - 1, 0)
-        allowed = int(current_count) < limit
-        return RateLimitDecision(allowed=allowed, remaining=remaining, retry_after_seconds=window_seconds if not allowed else 0)
+        now_ms = int(time.time() * 1000)
+        member = f"{now_ms}:{uuid4()}"
+        allowed, remaining, retry_after = await self._redis.eval(
+            self._REDIS_RATE_LIMIT_SCRIPT,
+            1,
+            key,
+            now_ms,
+            window_seconds * 1000,
+            limit,
+            member,
+        )
+        return RateLimitDecision(
+            allowed=bool(int(allowed)),
+            remaining=max(int(remaining), 0),
+            retry_after_seconds=max(int(retry_after), 0),
+        )
 
     async def _check_window_memory(self, key: str, limit: int, window_seconds: int) -> RateLimitDecision:
         async with self._lock:

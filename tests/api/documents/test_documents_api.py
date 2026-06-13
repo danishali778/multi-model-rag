@@ -3,6 +3,9 @@ from datetime import datetime, UTC
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
+from pydantic import ValidationError
+
 from app.api.dependencies import WorkspaceContext
 from app.api.routes.documents import (
     create_document,
@@ -243,3 +246,17 @@ def test_create_document_uses_idempotency_service_when_key_present():
     assert idempotency.calls[0]["idempotency_key"] == "idem-doc-1"
     assert idempotency.calls[0]["route_key"] == "/v1/documents"
     assert idempotency.calls[0]["request_body"]["title"] == "Handbook"
+
+
+def test_create_document_request_rejects_unsupported_source_type():
+    with pytest.raises(ValidationError):
+        CreateDocumentRequest(title="Handbook", source_type="pdf", text="Remote work is allowed.")
+
+
+def test_create_upload_url_request_rejects_mismatched_source_type():
+    with pytest.raises(ValidationError):
+        CreateUploadUrlRequest(
+            filename="policy.pdf",
+            content_type="application/pdf",
+            source_type="docx",
+        )
